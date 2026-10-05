@@ -2,6 +2,7 @@
 
 Implements the calls t3desk/teable_client.py uses:
 
+    GET   /api/space                             list spaces (the connection test)
     GET   /api/auth/user
     POST  /api/base                              create base
     GET   /api/base/{base}/table                 list tables
@@ -12,6 +13,13 @@ Implements the calls t3desk/teable_client.py uses:
     GET   /api/table/{t}/record/{r}
     POST  /api/table/{t}/record                  create (unique, notNull, choices enforced)
     PATCH /api/table/{t}/record/{r}              update
+
+Shapes and messages mirror a real server (release.2026-08-19T02-25-59Z.2698), see
+docs/notes/teable-live.md: errors are {"message", "status", "code", "data": {"domainCode"}};
+a unique clash is HTTP 400 "... must have a unique value"; the create-record answer holds only
+``id`` and the sent fields; GET/list add autoNumber, createdTime, lastModifiedTime at the top
+level and the system fields in ``fields``; dates are returned as UTC timestamps; a duplicate
+field or table name is accepted (a field gets " 2").
 
 There is no DELETE route: any DELETE answers 405 and is logged, so tests can prove none was sent.
 
@@ -30,14 +38,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+# hours east of UTC for the date-field time zones the fake understands
+TZ_OFFSET_HOURS = {"utc": 0, "UTC": 0, "Asia/Ho_Chi_Minh": 7}
+
 SYSTEM_TYPES = {"autoNumber", "createdTime", "lastModifiedTime", "createdBy", "lastModifiedBy"}
 
 
 class _HttpError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, domain_code: str = ""):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.domain_code = domain_code
 
 
 class FakeTeable:
@@ -175,15 +187,20 @@ class FakeTeable:
         if token in self.users:
             return {"id": "usr_" + token, "name": self.users[token]}
         if self.strict_auth:
-            raise _HttpError(401, "invalid token")
+            raise _HttpError(401, "Unauthorized")
         return {"id": "usr_" + token, "name": token}
 
     def _add_field(self, table: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
         name = spec.get("name")
         if not name or "type" not in spec:
             raise _HttpError(400, "field needs name and type")
-        if any(f["name"] == name for f in table["fields"]):
-            raise _HttpError(400, f"field name {name} already exists")
+        if spec.get("notNull") and table["records"]:
+            raise _HttpError(
+                400, f'Cannot mark field "{name}" as required because existing records contain empty values.',
+                "validation.field.required_existing_values",
+            )
+        while any(f["name"] == name for f in table["fields"]):  # real Teable renames, it does not refuse
+            name = f"{name} 2"
         field = {
             "id": f"fld{self._next('field'):06d}",
             "name": name,
@@ -200,16 +217,25 @@ class FakeTeable:
         name = body.get("name")
         if not name:
             raise _HttpError(400, "table name required")
-        if any(t["name"] == name and t["baseId"] == base_id for t in self._tables.values()):
-            raise _HttpError(400, f"table name {name} already exists")
         table = {"id": f"tbl{self._next('table'):06d}", "baseId": base_id, "name": name,
                  "fields": [], "records": []}
         self._tables[table["id"]] = table
         for spec in body.get("fields") or []:
             self._add_field(table, spec)
+        if "records" not in body:  # real Teable adds blank starter rows when `records` is left out
+            for _ in range(3):
+                table["records"].append(self._blank_record(table))
         for rec in body.get("records") or []:
             self._create_record(table, rec.get("fields", {}), "table-create", typecast=True)
         return table
+
+    def _blank_record(self, table: dict[str, Any]) -> dict[str, Any]:
+        record: dict[str, Any] = {"id": f"rec{self._next('record'):08d}", "fields": {}}
+        now = self._now()
+        record.update(autoNumber=len(table["records"]) + 1, createdTime=now, lastModifiedTime=now,
+                      createdBy="usr_table-create", lastModifiedBy="usr_table-create")
+        self._fill_system(table, record, "table-create", created=True)
+        return record
 
     def _check_value(self, field: dict[str, Any], value: Any, typecast: bool) -> None:
         ftype = field["type"]
@@ -218,11 +244,17 @@ class FakeTeable:
         if ftype == "singleSelect":
             names = [c["name"] for c in field["options"].get("choices", [])]
             if value not in names and not typecast:
-                raise _HttpError(400, f"{value!r} is not an option of field {field['name']}")
+                raise _HttpError(
+                    400, f'Invalid value for field "{field["name"]}": Invalid option: expected one of '
+                    + "|".join(f'"{n}"' for n in names), "validation.field.invalid_value")
         elif ftype == "number" and (isinstance(value, bool) or not isinstance(value, (int, float))):
-            raise _HttpError(400, f"field {field['name']} needs a number")
+            raise _HttpError(
+                400, f'Invalid value for field "{field["name"]}": Invalid input: expected number, '
+                f"received {type(value).__name__}", "validation.field.invalid_value")
         elif ftype in {"singleLineText", "longText", "date"} and not isinstance(value, str):
-            raise _HttpError(400, f"field {field['name']} needs text")
+            raise _HttpError(
+                400, f'Invalid value for field "{field["name"]}": Invalid input: expected string',
+                "validation.field.invalid_value")
 
     def _unique_clash(self, table: dict[str, Any], field: dict[str, Any], value: Any,
                       ignore: str | None = None) -> bool:
@@ -236,26 +268,46 @@ class FakeTeable:
         merged = dict(record["fields"])
         for name, value in values.items():
             if name not in by_name:
-                raise _HttpError(400, f"unknown field {name}")
+                raise _HttpError(404, f'Field "{name}" does not exist in this table', "field.key_not_found")
             if by_name[name]["type"] in SYSTEM_TYPES:
-                raise _HttpError(400, f"field {name} is computed and read only")
+                continue  # real Teable silently ignores a value sent for a computed field
             self._check_value(by_name[name], value, typecast)
             if value is None or value == "":
                 merged.pop(name, None)
+            elif by_name[name]["type"] == "date":
+                merged[name] = self._date_to_utc(by_name[name], value)
             else:
                 merged[name] = value
         for field in table["fields"]:
             if field["type"] in SYSTEM_TYPES:
                 continue
             value = merged.get(field["name"])
+            verb = "insert" if creating else "update"
+            if field["notNull"] and creating and field["name"] not in values:
+                raise _HttpError(
+                    400, f'Cannot create record: field "{field["name"]}" violates not-null constraint',
+                    "validation.field.not_null")
             if field["notNull"] and (creating or field["name"] in values) and value in (None, ""):
-                raise _HttpError(400, f"field {field['name']} must not be empty (notNull)")
+                raise _HttpError(
+                    400, f"Cannot complete {verb}: field {field['id']} cannot be empty",
+                    "validation.field.not_null")
             if field["unique"] and self.enforce_unique and value not in (None, "") \
                     and self._unique_clash(table, field, value, ignore=None if creating else record["id"]):
                 raise _HttpError(
-                    400, f"duplicate key value violates unique constraint on field {field['name']}: {value}"
-                )
+                    400, f"Cannot complete {verb}: field {field['id']} must have a unique value",
+                    "validation.field.unique")
         return merged
+
+    @staticmethod
+    def _date_to_utc(field: dict[str, Any], value: str) -> str:
+        """"2026-10-05" is local midnight in the field's time zone; Teable returns it as UTC."""
+        try:
+            day = datetime.strptime(value[:10], "%Y-%m-%d")
+        except ValueError:
+            return value
+        zone = field["options"].get("formatting", {}).get("timeZone", "utc")
+        moment = day - timedelta(hours=TZ_OFFSET_HOURS.get(zone, 0))
+        return moment.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     def _create_record(self, table: dict[str, Any], values: dict[str, Any], user: str,
                        typecast: bool = False) -> dict[str, Any]:
@@ -272,7 +324,7 @@ class FakeTeable:
         return record
 
     def _fill_system(self, table: dict[str, Any], record: dict[str, Any], user: str, created: bool) -> None:
-        who = {"id": "usr_" + user, "title": user}
+        who = {"id": "usr_" + user, "title": user, "email": f"{user}@fake.local"}
         for field in table["fields"]:
             kind, name = field["type"], field["name"]
             if kind == "autoNumber":
@@ -297,6 +349,13 @@ class FakeTeable:
         out = {k: v for k, v in record.items() if k != "fields"}
         out["fields"] = fields
         return json.loads(json.dumps(out))
+
+    def _render_created(self, table: dict[str, Any], record: dict[str, Any], key_type: str) -> dict[str, Any]:
+        """The create answer: id and the stored non-system fields, nothing else."""
+        full = self._render(table, record, key_type, None)
+        system_keys = {f["id"] if key_type == "id" else f["name"]
+                       for f in table["fields"] if f["type"] in SYSTEM_TYPES}
+        return {"id": full["id"], "fields": {k: v for k, v in full["fields"].items() if k not in system_keys}}
 
     def _matches(self, table: dict[str, Any], record: dict[str, Any], flt: dict[str, Any] | None) -> bool:
         if not flt:
@@ -333,7 +392,13 @@ class FakeTeable:
             with self._lock:
                 return self._route(method, path, query, data, token)
         except _HttpError as exc:
-            return exc.status, {"statusCode": exc.status, "message": exc.message}
+            body: dict[str, Any] = {
+                "message": exc.message, "status": exc.status,
+                "code": {401: "unauthorized", 404: "not_found"}.get(exc.status, "validation_error"),
+            }
+            if exc.domain_code:
+                body["data"] = {"domainCode": exc.domain_code}
+            return exc.status, body
 
     def _apply_delay(self, method: str, path: str) -> None:
         total = 0.0
@@ -361,13 +426,15 @@ class FakeTeable:
     def _token(headers: Any) -> str:
         auth = headers.get("Authorization", "")
         if not auth.startswith("Bearer ") or not auth[7:].strip():
-            raise _HttpError(401, "missing bearer token")
+            raise _HttpError(401, "Unauthorized")
         return auth[7:].strip()
 
     def _route(self, method: str, path: str, query: dict[str, list[str]], data: dict[str, Any],
                token: str) -> tuple[int, Any]:
         user = self._user_for(token)
         parts = [p for p in path.split("/") if p]  # api, ...
+        if parts == ["api", "space"] and method == "GET":
+            return 200, [{"id": "spcfake000000000001", "name": "T3", "avatar": None, "role": "owner"}]
         if parts[:2] == ["api", "auth"] and parts[2:] == ["user"] and method == "GET":
             return 200, {"id": user["id"], "name": user["name"], "email": f"{user['name']}@fake.local"}
         if parts == ["api", "base"] and method == "POST":
@@ -413,7 +480,7 @@ class FakeTeable:
                     table["records"] = snapshot  # all or nothing, like a transaction
                     raise
                 key = data.get("fieldKeyType", "name")
-                return 201, {"records": [self._render(table, r, key, None) for r in created]}
+                return 201, {"records": [self._render_created(table, r, key) for r in created]}
         if len(rest) == 2 and rest[0] == "record":
             record = next((r for r in table["records"] if r["id"] == rest[1]), None)
             if record is None:
@@ -428,14 +495,17 @@ class FakeTeable:
                 record["lastModifiedTime"] = self._now()
                 record["lastModifiedBy"] = "usr_" + user["name"]
                 self._fill_system(table, record, user["name"], created=False)
-                return 200, self._render(table, record, key, None)
+                answer = self._render(table, record, key, None)  # the PATCH answer: id and fields only
+                return 200, {"id": answer["id"], "fields": answer["fields"]}
         raise _HttpError(405 if method == "DELETE" else 404, f"no route for {method} /{'/'.join(rest)}")
 
     def _list(self, table: dict[str, Any], query: dict[str, list[str]]) -> list[dict[str, Any]]:
         take = int((query.get("take") or ["100"])[0])
         skip = int((query.get("skip") or ["0"])[0])
         if not 1 <= take <= 1000:
-            raise _HttpError(400, "take must be between 1 and 1000")
+            raise _HttpError(
+                400, 'Validation error: Can\'t take more than 1000 records, please reduce take count at "take"'
+                if take > 1000 else 'Validation error: You should at least take 1 record at "take"')
         key = (query.get("fieldKeyType") or ["name"])[0]
         try:
             flt = json.loads(query["filter"][0]) if query.get("filter") else None

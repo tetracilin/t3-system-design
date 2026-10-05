@@ -1,12 +1,12 @@
-# UNVERIFIED: no Hermes API reference exists yet. See README.md in this folder.
+# Follows docs/reference/hermes-api-server.md (Runs API). UNVERIFIED parts: status values, document storage, skill names. See README.md.
 id: hermes_skill
 name: Hermes skill (RFQ / RFP)
-version: 0.1.0
+version: 0.2.0
 config:
   - {key: base_url, label: "Hermes API server address", default: "http://127.0.0.1:8642"}
-  - {key: token, label: "Hermes API token", secret: true}
-  - {key: skill_tao_rfq, label: "Skill name for Tạo RFQ", default: "rfq"}
-  - {key: skill_tao_rfp, label: "Skill name for Tạo RFP", default: "rfp"}
+  - {key: token, label: "Hermes API key (API_SERVER_KEY)", secret: true}
+  - {key: skill_tao_rfq, label: "Skill name for Tạo RFQ (UNVERIFIED)", default: "rfq"}
+  - {key: skill_tao_rfp, label: "Skill name for Tạo RFP (UNVERIFIED)", default: "rfp"}
 hosts:
   - "{config:base_url}"
 writes: [rfq]

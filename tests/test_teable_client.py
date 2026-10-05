@@ -69,13 +69,80 @@ def test_projection_and_filter(fake_teable, client, tid):
 # ---- records and the first-come rule -------------------------------------------
 
 
-def test_create_returns_id_autonumber_and_times(client, tid):
+def test_create_answer_has_only_id_and_fields_and_get_has_the_times(client, tid):
+    """Real Teable: the create answer carries no autoNumber or times; get and list do."""
     rec = client.create_record(tid["yeu_cau"], {"ma_yc": "R1", "mo_ta": "x", "muc": "Bắt buộc"})
     assert rec["id"].startswith("rec")
-    assert rec["autoNumber"] == 1
-    assert rec["createdTime"] and rec["createdTime"] == rec["lastModifiedTime"]
+    assert set(rec) == {"id", "fields"} and rec["fields"] == {"ma_yc": "R1", "mo_ta": "x", "muc": "Bắt buộc"}
+    got = client.get_record(tid["yeu_cau"], rec["id"])
+    assert got["autoNumber"] == 1
+    assert got["createdTime"] and got["createdTime"] == got["lastModifiedTime"]
+    assert got["fields"]["created_by"]["title"]
     second = client.create_record(tid["yeu_cau"], {"ma_yc": "R2", "mo_ta": "y"})
-    assert second["autoNumber"] == 2 and second["createdTime"] > rec["createdTime"]
+    got2 = client.get_record(tid["yeu_cau"], second["id"])
+    assert got2["autoNumber"] == 2 and got2["createdTime"] > got["createdTime"]
+
+
+def test_unique_violation_has_the_real_message_and_codes(make_client, tid):
+    c = make_client("alice")
+    c.create_record(tid["moc"], {"ma_moc": "G1", "ten": "a"})
+    with pytest.raises(TeableError) as caught:
+        c.create_record(tid["moc"], {"ma_moc": "G1", "ten": "b"})
+    exc = caught.value
+    assert exc.status == 400 and exc.code == "validation_error"
+    assert exc.domain_code == "validation.field.unique"
+    assert "must have a unique value" in exc.message and exc.is_unique_violation
+
+
+def test_unique_violation_needs_the_unique_domain_code_when_present():
+    other = TeableError("must have a unique value", status=400, domain_code="validation.field.not_null")
+    assert not other.is_unique_violation
+    assert TeableError("x", status=400, domain_code="validation.field.unique").is_unique_violation
+
+
+def test_date_comes_back_as_plain_date(client, tid):
+    rec = client.create_record(tid["ung_vien"], {"ma_uv": "UV-1", "ma_nut": "N1", "ngay_kiem_tra": "2026-10-05"})
+    assert rec["fields"]["ngay_kiem_tra"] == "2026-10-05"
+    assert client.get_record(tid["ung_vien"], rec["id"])["fields"]["ngay_kiem_tra"] == "2026-10-05"
+    listed = client.list_all_records(tid["ung_vien"])
+    assert listed[0]["fields"]["ngay_kiem_tra"] == "2026-10-05"
+    assert listed[0]["fields"]["created_time"].endswith("Z")  # system times are left alone
+
+
+def test_update_answer_has_fields_only_and_get_has_the_new_time(client, tid):
+    rec = client.create_record(tid["moc"], {"ma_moc": "G1", "ten": "a"})
+    before = client.get_record(tid["moc"], rec["id"])
+    upd = client.update_record(tid["moc"], rec["id"], {"ten": None})
+    assert set(upd) == {"id", "fields"} and "ten" not in upd["fields"]  # None clears the field
+    assert client.get_record(tid["moc"], rec["id"])["lastModifiedTime"] > before["lastModifiedTime"]
+
+
+def test_unknown_field_is_404_and_computed_field_is_ignored(client, tid):
+    with pytest.raises(TeableError) as caught:
+        client.create_record(tid["moc"], {"ma_moc": "G9", "nope": "x"})
+    assert caught.value.status == 404 and "nope" in caught.value.message
+    rec = client.create_record(tid["moc"], {"ma_moc": "G8", "created_time": "2020-01-01T00:00:00.000Z"})
+    assert client.get_record(tid["moc"], rec["id"])["createdTime"] > "2026"
+
+
+def test_create_field_with_existing_name_is_renamed_not_refused(client, tid):
+    made = client.create_field(tid["moc"], {"name": "ten", "type": "singleLineText"})
+    assert made["name"] == "ten 2"
+
+
+def test_notnull_field_cannot_be_added_to_a_table_with_rows(client, tid):
+    client.create_record(tid["moc"], {"ma_moc": "G1", "ten": "a"})
+    with pytest.raises(TeableError) as caught:
+        client.create_field(tid["moc"], {"name": "extra", "type": "singleLineText", "notNull": True})
+    assert caught.value.status == 400 and caught.value.domain_code == "validation.field.required_existing_values"
+
+
+def test_table_created_without_records_key_gets_blank_starter_rows(client):
+    made = client._request("POST", "/api/base/bseX/table",
+                           json_body={"name": "starter", "fields": [{"name": "a", "type": "singleLineText"}]})
+    assert len(client.list_records(made["id"])) == 3  # why create_table sends records: []
+    empty = client.create_table("bseX", "empty", [{"name": "a", "type": "singleLineText"}])
+    assert client.list_records(empty["id"]) == []
 
 
 def test_duplicate_id_is_refused_and_first_record_is_untouched(make_client, fake_teable, tid):
@@ -86,7 +153,8 @@ def test_duplicate_id_is_refused_and_first_record_is_untouched(make_client, fake
     assert caught.value.status == 400 and caught.value.is_unique_violation
     rows = fake_teable.records("ung_vien")
     assert len(rows) == 1
-    assert rows[0]["fields"]["model"] == "A-1" and rows[0]["lastModifiedTime"] == first["lastModifiedTime"]
+    assert rows[0]["fields"]["model"] == "A-1"
+    assert rows[0]["lastModifiedTime"] == client_get(alice, tid, first)["lastModifiedTime"]
     assert record_author(client_get(alice, tid, first)) == "alice"
 
 
@@ -136,16 +204,20 @@ def test_two_threads_same_id_exactly_one_wins(make_client, fake_teable, tid):
 
 def test_update_changes_last_modified_and_keeps_created(client, tid):
     rec = client.create_record(tid["moc"], {"ma_moc": "G1", "ten": "a"})
+    first = client.get_record(tid["moc"], rec["id"])
     upd = client.update_record(tid["moc"], rec["id"], {"ten": "b"})
     assert upd["fields"]["ten"] == "b"
-    assert upd["lastModifiedTime"] > rec["lastModifiedTime"]
-    assert upd["createdTime"] == rec["createdTime"]
+    after = client.get_record(tid["moc"], rec["id"])
+    assert after["lastModifiedTime"] > first["lastModifiedTime"]
+    assert after["createdTime"] == first["createdTime"]
 
 
 def test_create_sends_one_record_per_request(fake_teable, client, tid):
     fake_teable.request_log.clear()
     client.create_record(tid["moc"], {"ma_moc": "G1", "ten": "a"})
-    assert [r["method"] for r in fake_teable.request_log] == ["POST"]
+    # one POST; the only other call is the once-per-table field lookup that finds the date fields
+    assert [r["method"] for r in fake_teable.request_log] == ["POST", "GET"]
+    assert fake_teable.request_log[1]["path"].endswith("/field")
 
 
 # ---- no delete anywhere --------------------------------------------------------
@@ -208,7 +280,7 @@ def test_server_down_raises_connection_error_with_clear_text(fake_teable, make_c
         c.ping()
     assert caught.value.status is None and "cannot reach Teable" in str(caught.value)
     fake_teable.start()  # same port, state kept
-    assert c.ping()["name"] == "t"
+    assert c.ping()["user"]["name"] == "t"
 
 
 def test_missing_token_is_a_401_and_token_never_appears_in_errors_or_repr(fake_teable, make_client):
@@ -227,8 +299,25 @@ def test_rejected_token_gives_401(tid_unused=None):
                 bad.ping()
             assert caught.value.status == 401 and "bad-token" not in str(caught.value)
         with TeableClient(strict.url, "good", backoff=0) as good:
-            assert good.ping()["name"] == "Good"
+            assert good.ping()["user"]["name"] == "Good"
 
 
-def test_ping_returns_signed_in_user(make_client):
-    assert make_client("alice").ping()["name"] == "alice"
+def test_ping_returns_signed_in_user_and_spaces(make_client, fake_teable):
+    info = make_client("alice").ping()
+    assert info["user"]["name"] == "alice" and info["spaces"][0]["name"] == "T3"
+    assert [r["path"] for r in fake_teable.request_log][-2:] == ["/api/space", "/api/auth/user"]
+
+
+def test_ping_works_when_the_token_may_not_read_the_user(make_client, fake_teable):
+    """A scoped token gets 403 on the user endpoint; /api/space still proves the token."""
+    fake_teable.fail_next(403, "Forbidden resource", path_contains="/api/auth/user")
+    info = make_client("alice").ping()
+    assert info["user"] is None and info["spaces"]
+
+
+def test_ping_refuses_an_anonymous_identity():
+    with FakeTeable(users={"anon": "anonymous"}) as anon:
+        with TeableClient(anon.url, "anon", backoff=0) as c:
+            with pytest.raises(TeableError) as caught:
+                c.ping()
+            assert caught.value.status == 401 and "anonymous" in caught.value.message

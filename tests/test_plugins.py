@@ -1,6 +1,7 @@
 """Plugins: acceptance tests 11, 12, 13, 14 of docs/REQUIREMENTS.md section 12, plus the api edges.
 
-fake_hermes.py is UNVERIFIED (no Hermes API reference exists); the mcp_tool tests use a fake session.
+fake_hermes.py mimics the documented Hermes Runs API (status values and output format are
+UNVERIFIED); the mcp_tool tests use a fake session.
 """
 
 from __future__ import annotations
@@ -349,7 +350,7 @@ def test_audit_log_has_fields_but_no_secret_or_payload(make_app, fake_teable, tm
         app.host.load_all()
         api = app.host._apis["hermes_skill"]
         with app.host._in_action("tao_rfq"):
-            api.http("POST", hermes.url + "/v1/skills/rfq/runs", {"secret_text": "payload-body"},
+            api.http("POST", hermes.url + "/v1/runs", {"input": "payload-body"},
                      headers={"Authorization": f"Bearer {TOKEN}"}, record_ids=["RFQ-009"])
         api.log("calling with", TOKEN)
         api.notify(f"token was {TOKEN}")
@@ -537,12 +538,18 @@ def test_13_rfq_flow_against_fake_hermes_ends_with_committed_rfq_in_da_tao(make_
         assert result.status == "ok", result.error
         # the preview showed the exact payload and the target host, and it is clean
         preview = confirm.previews[0]
-        assert preview.payload == start.payload and preview.host == hermes.host
+        assert preview.host == hermes.host and preview.method == "POST"
+        assert set(preview.payload) == {"input", "instructions", "session_id"}
+        assert preview.payload["session_id"] == "t3desk-RFQ-001"
+        assert 'skill "rfq"' in preview.payload["input"] and 'skill named "rfq"' in preview.payload["instructions"]
         text = json.dumps(preview.payload, ensure_ascii=False)
         assert rfq_mod.forbidden_paths(preview.payload) == []
         for secret in ("123456", "987654", "7777777"):
             assert secret not in text
         assert hermes.runs["run-0001"]["payload"] == start.payload and hermes.runs["run-0001"]["skill"] == "rfq"
+        post = hermes.requests[0]
+        assert post["method"] == "POST" and post["path"] == "/v1/runs" and post["idempotency_key"] == "t3desk-RFQ-001"
+        assert rfq_mod.forbidden_paths(hermes.runs["run-0001"]["payload"]) == []
         # the draft is now Đang tạo with the run reference
         draft = app.store.list_drafts("rfq")[0]
         assert draft.fields["trang_thai"] == "Đang tạo" and draft.fields["ma_tac_vu_ngoai"] == "run-0001"
@@ -589,6 +596,46 @@ def test_13_failed_hermes_run_returns_draft_to_nhap_with_note(make_app, fake_tea
         draft = app.store.list_drafts("rfq")[0]
         assert draft.fields["trang_thai"] == "Nháp" and "skill crashed" in draft.fields["ghi_chu"]
         assert any("failed" in t for _, t in app.host.notifications)
+
+
+def test_13_http_429_on_start_is_retry_later_and_draft_stays_nhap(make_app, fake_teable):
+    seed_tank(fake_teable, make_app("S").client, make_app("S").table_ids)
+    with FakeHermes(busy_starts=1) as hermes:
+        app = _hermes_app(make_app, hermes, Confirmer(True))
+        refresh(app)
+        start = rfq_mod.start_rfq(app.host.core, kind="RFQ", ma_uv=["UV-002"])
+        result = app.host.run_action("hermes_skill", "tao_rfq", start.payload)
+        assert result.status == "ok" and result.value["retry_later"] is True and "429" in result.value["error"]
+        assert any("busy" in t for _, t in app.host.notifications)
+        assert app.host.plugins["hermes_skill"].state == "enabled"
+        assert app.store.list_drafts("rfq")[0].fields["trang_thai"] == "Nháp" and hermes.runs == {}
+        assert app.host.status_bar_jobs() == []
+        # trying again later works, and the same Idempotency-Key is used
+        assert app.host.run_action("hermes_skill", "tao_rfq", start.payload).status == "ok"
+        keys = {r["idempotency_key"] for r in hermes.requests if r["method"] == "POST"}
+        assert keys == {"t3desk-RFQ-001"} and len(hermes.runs) == 1
+
+
+def test_13_same_idempotency_key_returns_the_same_run(make_app, fake_teable):
+    with FakeHermes() as hermes:
+        import httpx
+        auth = {"Authorization": f"Bearer {TOKEN}", "Idempotency-Key": "k-1"}
+        first = httpx.post(hermes.url + "/v1/runs", json={"input": "x"}, headers=auth).json()
+        second = httpx.post(hermes.url + "/v1/runs", json={"input": "x"}, headers=auth).json()
+        assert first == second == {"run_id": "run-0001", "status": "started"}
+
+
+def test_hermes_output_parsing_and_status_mapping():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("hermes_plugin_mod", Path(__file__).parent.parent
+                                                  / "plugins" / "hermes_skill" / "plugin.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.parse_output('{"link": "http://a.invalid/x.docx"}') == {"link": "http://a.invalid/x.docx", "text": ""}
+    assert mod.parse_output('```json\n{"text": "body"}\n```') == {"link": "", "text": "body"}
+    assert mod.parse_output("Done: http://a.invalid/y.docx.")["link"].startswith("http://a.invalid/y.docx")
+    assert mod.parse_output("plain words") == {"link": "", "text": "plain words"}
+    assert mod.parse_output(None) == {"link": "", "text": ""}
 
 
 def test_13_rfp_flow_uses_rfp_skill_and_empty_items(make_app, fake_teable):
@@ -831,19 +878,22 @@ def test_mcp_template_rendering():
 
 
 class FakeSession:
-    def __init__(self):
+    def __init__(self, replies: dict[str, str] | None = None):
         self.calls: list[tuple[str, dict]] = []
+        self.replies = replies or {}
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
-        return SimpleNamespace(content=[SimpleNamespace(text=f"known about {arguments.get('query')}")])
+        text = self.replies.get(name, f"known about {arguments.get('name') or arguments.get('query')}")
+        return SimpleNamespace(content=[SimpleNamespace(text=text)])
 
     async def list_tools(self):
-        return SimpleNamespace(tools=[SimpleNamespace(name="query", description="ask"),
+        return SimpleNamespace(tools=[SimpleNamespace(name="entity", description="ask"),
                                       SimpleNamespace(name="put_page", description="")])
 
 
-def _mcp_app(make_app, confirm, **config):
+def _mcp_app(make_app, confirm, replies=None, **config):
+    config.setdefault("transport", "stdio")
     app = make_app("A", confirm=confirm)
     app.host.set_enabled("mcp_tool", True)
     app.host.discover()
@@ -851,7 +901,7 @@ def _mcp_app(make_app, confirm, **config):
         app.host.set_config("mcp_tool", key, value)
     app.host.start()
     assert app.host.plugins["mcp_tool"].state == "enabled", app.host.plugins["mcp_tool"].error
-    session = FakeSession()
+    session = FakeSession(replies)
 
     from contextlib import asynccontextmanager
 
@@ -863,47 +913,236 @@ def _mcp_app(make_app, confirm, **config):
     return app, session
 
 
-def test_mcp_lookup_action_previews_calls_tool_and_shows_result_without_writing(make_app):
+def test_mcp_lookup_uses_entity_with_vendor_name_and_shows_result_without_writing(make_app):
     confirm = Confirmer(True)
     app, session = _mcp_app(make_app, confirm, command="gbrain", args="serve")
-    payload = {"items": [{"hang": "Reson", "model": "TC4013"}], "vendor": "Reson"}
+    payload = {"items": [{"hang": "Reson", "model": "TC4013"}], "vendor": "Teledyne"}
     result = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", payload)
-    assert result.status == "ok" and result.value == "known about Reson TC4013 Reson"
-    assert session.calls == [("query", {"query": "Reson TC4013 Reson"})]
-    assert confirm.previews[0].payload == {"tool": "query", "arguments": {"query": "Reson TC4013 Reson"}}
+    assert result.status == "ok" and result.value == "known about Teledyne"
+    assert session.calls == [("entity", {"name": "Teledyne"})]
+    assert confirm.previews[0].payload == {"tool": "entity", "arguments": {"name": "Teledyne"}}
     assert confirm.previews[0].host == "stdio:gbrain"
     assert app.host.notifications[-1][1].startswith("known about")
     assert app.store.count_drafts() == 0
     assert app.host.audit_entries()[-1]["host"] == "stdio:gbrain"
 
 
-def test_mcp_declined_preview_calls_nothing_and_unmapped_action_is_a_plugin_error(make_app):
+@pytest.mark.parametrize("payload,name", [
+    ({"nha_cung_cap": "Hãng X"}, "Hãng X"),
+    ({"items": [{"hang": "Reson", "model": "TC4013"}]}, "Reson"),
+    ({"items": [{"model": "TC4013"}]}, "TC4013"),
+    ({"hang": "Reson"}, "Reson"),
+])
+def test_mcp_lookup_name_falls_through_vendor_brand_model(make_app, payload, name):
+    app, session = _mcp_app(make_app, Confirmer(True), command="gbrain")
+    app.host.run_action("mcp_tool", "tra_cuu_boi_canh", payload)
+    assert session.calls == [("entity", {"name": name})]
+
+
+def test_mcp_lookup_falls_back_to_search_when_entity_finds_nothing(make_app):
+    confirm = Confirmer(True)
+    replies = {"entity": json.dumps({"found": False, "suggestions": []}), "search": "hit"}
+    app, session = _mcp_app(make_app, confirm, replies, command="gbrain")
+    result = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"items": [{"hang": "Reson", "model": "TC4013"}]})
+    assert result.value == "hit"
+    assert session.calls == [("entity", {"name": "Reson"}), ("search", {"query": "Reson TC4013"})]
+    assert [p.payload["tool"] for p in confirm.previews] == ["entity", "search"]  # each call is previewed
+
+
+def test_mcp_lookup_with_no_name_and_empty_payload_is_a_plugin_error_and_calls_nothing(make_app):
+    app, session = _mcp_app(make_app, Confirmer(True), command="gbrain")
+    result = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {})
+    assert result.status == "error" and "nothing to look up" in result.error and session.calls == []
+
+
+def test_mcp_connection_test_is_whoami_and_rfq_rfp_actions_are_gone(make_app):
+    app, session = _mcp_app(make_app, Confirmer(True), command="gbrain")
+    assert app.host.run_action("mcp_tool", "kiem_tra_ket_noi").status == "ok"
+    assert session.calls == [("whoami", {})]
+    manifest = app.host.plugins["mcp_tool"].manifest
+    assert {a.id for a in manifest.actions} == {"tra_cuu_boi_canh", "kiem_tra_ket_noi", "liet_ke_cong_cu"}
+    module = app.host.plugins["mcp_tool"].module
+    assert "tao_rfq" not in module.DEFAULT_MAPPINGS and "tao_rfp" not in module.DEFAULT_MAPPINGS
+
+
+def test_mcp_declined_preview_calls_nothing(make_app):
     app, session = _mcp_app(make_app, Confirmer(False), command="gbrain")
-    assert app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {}).status == "declined"
+    assert app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"vendor": "X"}).status == "declined"
     assert session.calls == []
-    app2, session2 = _mcp_app(make_app, Confirmer(True), command="gbrain")
-    result = app2.host.run_action("mcp_tool", "tao_rfq", {"ma_rfq": "RFQ-001"})  # gbrain tool unknown: unmapped
-    assert result.status == "error" and "no tool is mapped" in result.error and session2.calls == []
+
+
+WRITE_TOOL_NAMES = ["put_page", "edit_page", "capture", "remember", "forget", "add_timeline_entry",
+                    "cancel_job", "cancel_anything", "submit_agent", "PUT_PAGE", " capture "]
+
+
+@pytest.mark.parametrize("tool", WRITE_TOOL_NAMES)
+def test_mcp_write_tools_are_refused_even_when_mapped(make_app, tool):
+    confirm = Confirmer(True)
+    mapping = json.dumps({"tra_cuu_boi_canh": {"tool": tool, "args": {"x": "{{vendor}}"}}})
+    app, session = _mcp_app(make_app, confirm, command="gbrain", mappings=mapping)
+    result = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"vendor": "V"})
+    assert result.status == "error" and "write tool" in result.error
+    assert session.calls == [] and confirm.previews == []  # refused before any preview or call
+    # also refused in the fallback and at the wire
+    module = app.host.plugins["mcp_tool"].module
+    with pytest.raises(PermissionError):
+        import asyncio
+        asyncio.run(module._call(None, tool, {}))
+
+
+def test_mcp_deny_list_covers_every_documented_write_tool():
+    m = _mcp_plugin_module()
+    for tool in ("put_page", "edit_page", "capture", "remember", "forget", "add_timeline_entry", "submit_agent",
+                 "cancel_x"):
+        assert m.is_write_tool(tool)
+    for tool in ("entity", "search", "query", "recall", "synthesize", "get_page", "whoami"):
+        assert not m.is_write_tool(tool)
 
 
 def test_mcp_custom_mapping_and_tool_listing(make_app):
-    mapping = json.dumps({"tao_rfq": {"tool": "make_rfq", "args": {"doc": "{{.}}"}}})
+    mapping = json.dumps({"tra_cuu_boi_canh": {"tool": "recall", "args": {"text": "{{vendor}}"}}})
     app, session = _mcp_app(make_app, Confirmer(True), command="gbrain", mappings=mapping)
-    app.host.run_action("mcp_tool", "tao_rfq", {"ma_rfq": "RFQ-005"})
-    assert session.calls == [("make_rfq", {"doc": {"ma_rfq": "RFQ-005"}})]
+    app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"vendor": "Reson"})
+    assert session.calls == [("recall", {"text": "Reson"})]
     app.host.plugins["mcp_tool"].state = "enabled"
     listed = app.host.run_action("mcp_tool", "liet_ke_cong_cu")
-    assert [t["name"] for t in listed.value] == ["query", "put_page"]
+    assert [t["name"] for t in listed.value] == ["entity", "put_page"]  # Settings lists tools/list as is
 
 
-def test_mcp_url_transport_obeys_the_host_allow_list(make_app):
-    app, _ = _mcp_app(make_app, Confirmer(True), transport="url", url="http://127.0.0.1:8765/mcp")
+def test_mcp_url_host_allow_list_is_derived_from_the_configured_url(make_app):
+    app, _ = _mcp_app(make_app, Confirmer(True), transport="url", url="https://brain.tail1234.ts.net/mcp")
     api = app.host._apis["mcp_tool"]
-    assert api.check_host("http://127.0.0.1:8765/mcp") == "127.0.0.1:8765"
+    assert api.check_host("https://brain.tail1234.ts.net/mcp") == "brain.tail1234.ts.net"
+    for bad in ("https://other.example/mcp", "https://brain.tail1234.ts.net.evil.example/mcp",
+                "https://brain.tail1234.ts.net@evil.example/mcp", "ftp://brain.tail1234.ts.net/mcp"):
+        with pytest.raises(pa.HostNotAllowed):
+            api.check_host(bad)
+
+
+def test_mcp_refused_host_sends_nothing_and_http_to_a_remote_host_is_refused(make_app):
+    app, session = _mcp_app(make_app, Confirmer(True), transport="url", url="http://brain.example/mcp")
+    app.host.set_secret("mcp_tool", "token", "gb-token-1")
+    result = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"vendor": "V"})
+    assert result.status == "error" and "https" in result.error and session.calls == []
+    # allow-list: switching the url changes the allowed host; the old one is refused by api.check_host
+    api = app.host._apis["mcp_tool"]
+    app.host.set_config("mcp_tool", "url", "https://new.example/mcp")
     with pytest.raises(pa.HostNotAllowed):
-        api.check_host("http://127.0.0.1:9999/mcp")
-    with pytest.raises(pa.HostNotAllowed):
-        api.check_host("http://elsewhere.invalid/mcp")
+        api.check_host("http://brain.example/mcp")
+
+
+class FakeMcpHttpServer:
+    """A minimal streamable-HTTP MCP server (JSON replies) that records headers and calls."""
+
+    def __init__(self, token: str):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        outer = self
+        self.token = token
+        self.requests: list[dict[str, Any]] = []
+        self.tool_calls: list[tuple[str, dict]] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # quiet
+                pass
+
+            def _send(self, code: int, body: dict | None = None):
+                data = json.dumps(body).encode() if body is not None else b""
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Mcp-Session-Id", "s1")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_DELETE(self):
+                self._send(200)
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                outer.requests.append({"auth": self.headers.get("Authorization"), "method": body.get("method")})
+                if self.headers.get("Authorization") != f"Bearer {outer.token}":
+                    return self._send(401, {"error": "unauthorized"})
+                method, rid = body.get("method"), body.get("id")
+                if rid is None:
+                    return self._send(202)
+                if method == "initialize":
+                    result = {"protocolVersion": body["params"]["protocolVersion"], "capabilities": {"tools": {}},
+                              "serverInfo": {"name": "fake-gbrain", "version": "0"}}
+                elif method == "tools/list":
+                    result = {"tools": [{"name": n, "description": "d", "inputSchema": {"type": "object"}}
+                                        for n in ("entity", "search", "whoami", "put_page")]}
+                elif method == "tools/call":
+                    name, args = body["params"]["name"], body["params"].get("arguments") or {}
+                    outer.tool_calls.append((name, args))
+                    result = {"content": [{"type": "text", "text": f"{name}:{json.dumps(args, ensure_ascii=False)}"}]}
+                else:
+                    result = {}
+                self._send(200, {"jsonrpc": "2.0", "id": rid, "result": result})
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_address[1]}/mcp"
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_mcp_remote_http_round_trip_sends_bearer_token_and_never_leaks_it(make_app):
+    pytest.importorskip("mcp")
+    with FakeMcpHttpServer("gb-secret-token") as server:
+        confirm = Confirmer(True)
+        app = make_app("A", confirm=confirm)
+        app.host.set_enabled("mcp_tool", True)
+        app.host.discover()
+        app.host.set_config("mcp_tool", "url", server.url)  # transport defaults to url
+        app.host.set_secret("mcp_tool", "token", "gb-secret-token")
+        app.host.start()
+        assert app.host.plugins["mcp_tool"].state == "enabled", app.host.plugins["mcp_tool"].error
+
+        who = app.host.run_action("mcp_tool", "kiem_tra_ket_noi")
+        assert who.status == "ok", who.error
+        lookup = app.host.run_action("mcp_tool", "tra_cuu_boi_canh", {"vendor": "Hãng X"})
+        assert lookup.status == "ok" and lookup.value.startswith("entity:")
+        tools = app.host.run_action("mcp_tool", "liet_ke_cong_cu")
+        assert [t["name"] for t in tools.value] == ["entity", "search", "whoami", "put_page"]  # tools/list shown as is
+
+        assert server.tool_calls == [("whoami", {}), ("entity", {"name": "Hãng X"})]
+        assert server.requests and all(r["auth"] == "Bearer gb-secret-token" for r in server.requests)
+        assert confirm.previews[0].host == server.url.split("//")[1].split("/")[0]
+        assert "gb-secret-token" not in json.dumps([p.payload for p in confirm.previews])
+        for text in (app.host.audit_path.read_text(encoding="utf-8"),
+                     app.host.log_path.read_text(encoding="utf-8") if app.host.log_path.exists() else "",
+                     Path(app.store.path).read_bytes().decode("latin-1"),
+                     " ".join(t for _, t in app.host.notifications)):
+            assert "gb-secret-token" not in text
+
+
+def test_mcp_remote_without_token_or_with_wrong_token_is_a_clear_error_and_calls_nothing(make_app):
+    pytest.importorskip("mcp")
+    with FakeMcpHttpServer("right-token") as server:
+        app = make_app("A", confirm=Confirmer(True))
+        app.host.set_enabled("mcp_tool", True)
+        app.host.discover()
+        app.host.set_config("mcp_tool", "url", server.url)
+        app.host.start()
+        missing = app.host.run_action("mcp_tool", "kiem_tra_ket_noi")
+        assert missing.status == "error" and "token" in missing.error and server.requests == []
+        app.host.set_secret("mcp_tool", "token", "wrong-token")
+        app.host.plugins["mcp_tool"].state = "available"  # a failed plugin is reloaded to try again
+        app.host.load_all()
+        wrong = app.host.run_action("mcp_tool", "kiem_tra_ket_noi")
+        assert wrong.status == "error" and server.tool_calls == []
+        assert "wrong-token" not in (wrong.error or "")
 
 
 def test_actions_for_screen_and_role_only_lists_loaded_plugins(make_app):

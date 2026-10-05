@@ -18,3 +18,5 @@ secrets*
 token*.txt
 audit.jsonl
 plugin.log
+
+.secret.txt

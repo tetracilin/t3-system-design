@@ -1,13 +1,19 @@
-"""In-process fake Hermes server for the hermes_skill plugin tests.
+"""In-process fake Hermes API server for the hermes_skill plugin tests.
 
-UNVERIFIED: the wire format here is invented, because no Hermes API reference exists. It mirrors
-``run_skill`` in plugins/hermes_skill/plugin.py. ``FakeHermes.run_skill`` is the single function
-that handles both starting a skill and asking about a run.
+Mimics the shapes in docs/reference/hermes-api-server.md: Bearer auth, ``POST /v1/runs`` with
+``{"input", "instructions", "session_id"}`` and an ``Idempotency-Key`` header returning
+``{"run_id", "status": "started"}``, ``GET /v1/runs/{run_id}`` returning ``status`` and ``output``,
+and HTTP 429 ``Too many concurrent runs (max N)``.
+
+UNVERIFIED: the documentation does not give the status strings of ``GET /v1/runs/{id}`` (this fake
+uses running / completed / failed) or what ``output`` looks like (this fake returns the JSON
+``{"link": ...}`` the plugin asks for).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -17,13 +23,16 @@ TOKEN = "hermes-test-token"
 
 class FakeHermes:
     def __init__(self, *, polls_until_done: int = 2, link: str = "http://nas.invalid/docs/RFQ.docx",
-                 fail: bool = False, token: str = TOKEN):
+                 fail: bool = False, token: str = TOKEN, busy_starts: int = 0):
         self.polls_until_done = polls_until_done
         self.link = link
         self.fail = fail
         self.token = token
-        self.requests: list[dict[str, Any]] = []  # what arrived: method, path, body (no headers kept)
-        self.runs: dict[str, dict[str, Any]] = {}
+        self.busy_starts = busy_starts  # the next N starts get HTTP 429
+        # what arrived: method, path, body, idempotency_key (the Authorization header is never kept)
+        self.requests: list[dict[str, Any]] = []
+        self.runs: dict[str, dict[str, Any]] = {}  # run_id -> skill, payload, body, polls
+        self._by_key: dict[str, str] = {}
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -50,23 +59,35 @@ class FakeHermes:
     def __exit__(self, *exc: object) -> None:
         self.stop()
 
-    def run_skill(self, skill: str, payload: dict[str, Any] | None = None, run_ref: str | None = None
-                  ) -> dict[str, Any]:
-        """Start ``skill`` with ``payload``, or report on ``run_ref`` (each report counts as a poll)."""
+    def _create_run(self, body: dict[str, Any], key: str | None) -> tuple[int, dict[str, Any]]:
         with self._lock:
-            if payload is not None:
-                ref = f"run-{len(self.runs) + 1:04d}"
-                self.runs[ref] = {"skill": skill, "payload": payload, "polls": 0}
-                return {"run_id": ref}
-            run = self.runs.get(run_ref or "")
+            if key and key in self._by_key:  # idempotent replay: same run, no new one
+                return 200, {"run_id": self._by_key[key], "status": "started"}
+            if self.busy_starts > 0:
+                self.busy_starts -= 1
+                return 429, {"error": "Too many concurrent runs (max 10)"}
+            text = str(body.get("input", ""))
+            skill = re.search(r'skill "([^"]+)"', text)
+            marker = "Payload JSON:\n"
+            payload = json.loads(text.split(marker, 1)[1]) if marker in text else None
+            ref = f"run-{len(self.runs) + 1:04d}"
+            self.runs[ref] = {"skill": skill.group(1) if skill else "", "payload": payload, "body": body, "polls": 0}
+            if key:
+                self._by_key[key] = ref
+            return 200, {"run_id": ref, "status": "started"}
+
+    def _get_run(self, ref: str) -> tuple[int, dict[str, Any]]:
+        with self._lock:
+            run = self.runs.get(ref)
             if run is None:
-                return {"error": "unknown run"}
+                return 404, {"error": "unknown run"}
             run["polls"] += 1
             if run["polls"] < self.polls_until_done:
-                return {"state": "running"}
+                return 200, {"run_id": ref, "status": "running", "output": None}
             if self.fail:
-                return {"state": "failed", "error": "skill crashed"}
-            return {"state": "succeeded", "link": self.link}
+                return 200, {"run_id": ref, "status": "failed", "output": None, "error": "skill crashed"}
+            return 200, {"run_id": ref, "status": "completed", "output": json.dumps({"link": self.link}),
+                         "usage": {}, "runtime": {}}
 
     def _handler(self) -> type[BaseHTTPRequestHandler]:
         fake = self
@@ -83,14 +104,19 @@ class FakeHermes:
             def _serve(self, method: str) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length)) if length else None
-                fake.requests.append({"method": method, "path": self.path, "body": body})
+                key = self.headers.get("Idempotency-Key")
+                fake.requests.append({"method": method, "path": self.path, "body": body, "idempotency_key": key})
                 if self.headers.get("Authorization") != f"Bearer {fake.token}":
                     return self._reply(401, {"error": "bad token"})
                 parts = self.path.strip("/").split("/")
-                if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "skills"] and parts[3] == "runs":
-                    return self._reply(200, fake.run_skill(parts[2], payload=body or {}))
+                if method == "POST" and parts == ["v1", "runs"]:
+                    if not isinstance(body, dict) or "input" not in body:
+                        return self._reply(400, {"error": "input is required"})
+                    if key is not None and not 1 <= len(key) <= 255:
+                        return self._reply(400, {"error": "bad Idempotency-Key"})
+                    return self._reply(*fake._create_run(body, key))
                 if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "runs"]:
-                    return self._reply(200, fake.run_skill("", run_ref=parts[2]))
+                    return self._reply(*fake._get_run(parts[2]))
                 self._reply(404, {"error": "not found"})
 
             def do_POST(self) -> None:  # noqa: N802

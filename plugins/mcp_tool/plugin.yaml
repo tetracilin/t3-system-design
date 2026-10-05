@@ -1,19 +1,19 @@
-# Generic MCP client. The gbrain mappings are UNVERIFIED (see README.md).
+# gbrain over remote HTTP MCP (read-only). Argument names of search/query are UNVERIFIED (see README.md).
 id: mcp_tool
 name: MCP tool (gbrain)
-version: 0.1.0
+version: 0.2.0
 config:
-  - {key: transport, label: "stdio or url", default: "stdio"}
-  - {key: command, label: "Server command (stdio)"}
+  - {key: transport, label: "url (remote gbrain) or stdio", default: "url"}
+  - {key: url, label: "gbrain MCP URL, https://<host>/mcp"}
+  - {key: token, label: "gbrain bearer token (read-only scope)", secret: true}
+  - {key: command, label: "Server command (stdio alternative)"}
   - {key: args, label: "Server arguments (stdio), space separated"}
-  - {key: url, label: "Server URL (url transport)"}
   - {key: mappings, label: "Action to tool map (JSON); empty uses the shipped gbrain defaults"}
 hosts:
   - "{config:url}"
 writes: []
 actions:
   - {id: tra_cuu_boi_canh, label: "Tra cứu bối cảnh", screens: [nut.current, mua_hang.selection], roles: [system_designer, designer, engineer, sourcing, pm]}
-  - {id: tao_rfq, label: "Tạo RFQ (gbrain)", screens: [mua_hang.selection, nut.current], roles: [system_designer, designer, engineer, sourcing, pm]}
-  - {id: tao_rfp, label: "Tạo RFP (gbrain)", screens: [nut.current, rfq.row], roles: [system_designer, designer, engineer, pm]}
+  - {id: kiem_tra_ket_noi, label: "Kiểm tra kết nối gbrain", screens: [cai_dat.mcp], roles: [system_designer, designer, engineer, sourcing, pm]}
   - {id: liet_ke_cong_cu, label: "Liệt kê công cụ của máy chủ", screens: [cai_dat.mcp], roles: [system_designer, designer, engineer, sourcing, pm]}
 events: []

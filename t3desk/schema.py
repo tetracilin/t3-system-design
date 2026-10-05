@@ -69,7 +69,7 @@ def teable_field_payload(name: str, spec: dict[str, Any]) -> dict[str, Any]:
         payload["options"] = {"formatting": {"type": "decimal", "precision": 4}}
     elif ftype == "date":
         payload["options"] = {
-            "formatting": {"date": "YYYY-MM-DD", "time": "None", "timeZone": "Asia/Ho_Chi_Minh"}
+            "formatting": {"date": "YYYY-MM-DD", "time": "None", "timeZone": "UTC"}
         }
     if spec.get("unique"):
         payload["unique"] = True

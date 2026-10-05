@@ -21,10 +21,10 @@ Merged from `docs/notes/*.md` (commit, foundation, packaging, plugins, rules, ui
 
 ## Unverified
 
-- Teable (no real instance): all paths and payloads in `teable_client.py` (table create with `fields` and `records: []`, `unique`/`notNull` in table-create fields, number/date `options.formatting`, `GET /api/base/{id}/table`, `GET /api/auth/user`, `POST /api/base` with `spaceId`, filter shape, `createdBy` shape, `createdTime`/`autoNumber` on create responses, `get_record` returning `lastModifiedTime`, unique-violation as HTTP 400 or 409 and its message text). The fake mirrors these assumptions.
-- Hermes adapter: wire format invented (`POST /v1/skills/{skill}/runs`, `GET /v1/runs/{ref}`); skill names `rfq` / `rfp` are placeholders. UNVERIFIED in code and README.
-- gbrain MCP adapter: tool mappings are guesses; real `mcp` stdio/URL path never run. UNVERIFIED.
-- Paperclip push (`POST <url>/api/tasks`): invented; only the `cong_viec` contract is tested. UNVERIFIED.
+- Teable: verified against release.2026-08-19T02-25-59Z.2698 on 5 Oct 2026 (see `docs/notes/teable-live.md`); still unverified there: two different real users, more than 1000 rows, limited-permission tokens, rate limits, non-UTC date fields.
+- Hermes adapter: follows the documented Runs API (`POST /v1/runs`, `GET /v1/runs/{id}`, Idempotency-Key; see `docs/reference/hermes-api-server.md`) but never run against a real Hermes. UNVERIFIED: run `status` values, where documents are stored, real skill names (`rfq` / `rfp` are placeholders), whether the skill obeys the JSON-reply instruction.
+- gbrain MCP adapter: remote HTTP MCP (`https://<host>/mcp`, bearer token; see `docs/reference/gbrain-mcp.md`), read-only (write tools blocked in code). Never run against a real gbrain. UNVERIFIED: `search`/`query` argument names and response shapes. The guessed RFQ/RFP mapping was removed.
+- Paperclip push (`POST <url>/api/tasks`): invented; only the `cong_viec` contract is tested. UNVERIFIED. Paperclip's MCP page and the webhooks plugin (outbound events only) do not give an inbound task API; waiting for Paperclip's HTTP API docs.
 - Docker image tags and Teable environment variable names in `deploy/`; backup and restore scripts never run on a NAS.
 - Packaging on all three OSes; pywebview window on any OS; macOS and Linux never run; Ctrl or Cmd + S in pywebview; blob CSV download in some pywebview back ends.
 - UI walk in headless Edge on Windows was a scratch script, not part of the repo tests.

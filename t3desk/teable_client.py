@@ -1,7 +1,8 @@
 """The only module that talks HTTP to Teable.
 
-Paths and payloads follow Teable's API reference of 5 Oct 2026 and MUST be re-checked
-against the deployed Teable version (see docs/notes/foundation.md, "Unverified").
+Paths and payloads were checked against a real Teable (release.2026-08-19T02-25-59Z.2698,
+EE, PostgreSQL) on 5 Oct 2026; see docs/notes/teable-live.md for what was seen. Re-check
+them whenever the server is upgraded.
 
 There is deliberately no delete call: records are retired by status, never removed.
 """
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -23,22 +25,33 @@ RETRY_STATUSES = frozenset({429, 502, 503, 504})
 
 Record = dict[str, Any]
 
+# Teable answers a date written as 2026-10-05 in a UTC date field as this timestamp.
+_UTC_MIDNIGHT = re.compile(r"^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.000)?Z$")
+
 
 class TeableError(Exception):
     """A Teable call failed. ``status`` is None when no HTTP answer arrived."""
 
-    def __init__(self, message: str, *, status: int | None = None, method: str = "", path: str = ""):
+    def __init__(self, message: str, *, status: int | None = None, method: str = "", path: str = "",
+                 code: str = "", domain_code: str = ""):
         super().__init__(message)
         self.message = message
         self.status = status
         self.method = method
         self.path = path
+        self.code = code  # e.g. "validation_error"
+        self.domain_code = domain_code  # e.g. "validation.field.unique"
 
     @property
     def is_unique_violation(self) -> bool:
-        """True when the server refused a write because a unique field already holds the value."""
+        """True when the server refused a write because a unique field already holds the value.
+
+        Real Teable answers HTTP 400, code ``validation_error``, domainCode
+        ``validation.field.unique`` and "... must have a unique value"."""
         if self.status is None or not 400 <= self.status < 500:
             return False
+        if self.domain_code:
+            return self.domain_code == "validation.field.unique"
         text = self.message.lower()
         return self.status == 409 or "unique" in text or "duplicate" in text
 
@@ -77,6 +90,7 @@ class TeableClient:
         self._token = token
         self._retries = max(0, retries)
         self._backoff = backoff
+        self._date_fields: dict[str, list[str]] = {}
         self._http = httpx.Client(
             base_url=self._base_url,
             timeout=timeout,
@@ -156,19 +170,44 @@ class TeableClient:
                     status=response.status_code, method=method, path=path,
                 ) from exc
         message = response.text[:500]
+        code = domain_code = ""
         try:
             body = response.json()
             if isinstance(body, dict):
                 message = str(body.get("message") or body.get("error") or message)
+                code = str(body.get("code") or "")
+                data = body.get("data")
+                if isinstance(data, dict):
+                    domain_code = str(data.get("domainCode") or "")
         except ValueError:
             pass
-        raise TeableError(message, status=response.status_code, method=method, path=path)
+        raise TeableError(
+            message, status=response.status_code, method=method, path=path,
+            code=code, domain_code=domain_code,
+        )
 
     # ---- connection and structure -------------------------------------------
 
     def ping(self) -> dict[str, Any]:
-        """Test address and token. Returns the signed-in user."""
-        return self._request("GET", "/api/auth/user")
+        """Test address and token. Returns ``{"user": {...} | None, "spaces": [...]}``.
+
+        ``GET /api/space`` is the test because it works for scoped tokens, while
+        ``/api/auth/user/me`` answers 403 for them. A bad token answers 401. The user is read
+        from ``/api/auth/user`` when that is allowed; an anonymous identity is refused."""
+        spaces = self._request("GET", "/api/space")
+        user: dict[str, Any] | None = None
+        try:
+            user = self._request("GET", "/api/auth/user")
+        except TeableConnectionError:
+            raise
+        except TeableError as exc:
+            if exc.status not in (401, 403, 404):
+                raise
+        if isinstance(user, dict) and _is_anonymous(user):
+            raise TeableError("the token was not accepted: Teable treats this client as anonymous",
+                              status=401, method="GET", path="/api/auth/user")
+        return {"user": user if isinstance(user, dict) else None,
+                "spaces": spaces if isinstance(spaces, list) else []}
 
     def create_base(self, space_id: str, name: str) -> dict[str, Any]:
         return self._request("POST", "/api/base", json_body={"spaceId": space_id, "name": name})
@@ -186,7 +225,29 @@ class TeableClient:
         return self._request("GET", f"/api/table/{table_id}/field")
 
     def create_field(self, table_id: str, field: dict[str, Any]) -> dict[str, Any]:
+        """Create one field. Teable does NOT refuse a name that exists: it silently makes
+        "name 2". Callers must check ``list_fields`` first (bootstrap does)."""
+        self._date_fields.pop(table_id, None)
         return self._request("POST", f"/api/table/{table_id}/field", json_body=field)
+
+    def _date_field_names(self, table_id: str) -> list[str]:
+        if table_id not in self._date_fields:
+            self._date_fields[table_id] = [
+                f["name"] for f in self.list_fields(table_id) if f.get("type") == "date"
+            ]
+        return self._date_fields[table_id]
+
+    def _plain_dates(self, table_id: str, record: Record) -> Record:
+        """Turn "2026-10-05T00:00:00.000Z" in date fields back into "2026-10-05"."""
+        fields = record.get("fields")
+        if not isinstance(fields, dict):
+            return record
+        names = [n for n in self._date_field_names(table_id) if isinstance(fields.get(n), str)]
+        for name in names:
+            match = _UTC_MIDNIGHT.match(fields[name])
+            if match:
+                fields[name] = match.group(1)
+        return record
 
     # ---- records ------------------------------------------------------------
 
@@ -209,7 +270,9 @@ class TeableClient:
         if projection:
             params["projection"] = list(projection)
         data = self._request("GET", f"/api/table/{table_id}/record", params=params)
-        return data["records"]
+        if field_key_type != "name":
+            return data["records"]
+        return [self._plain_dates(table_id, r) for r in data["records"]]
 
     def iter_records(
         self,
@@ -247,21 +310,29 @@ class TeableClient:
         return self.list_records(table_id, filter=flt, take=MAX_TAKE)
 
     def get_record(self, table_id: str, record_id: str, *, field_key_type: str = "name") -> Record:
-        return self._request(
+        """One record with ``lastModifiedTime``, ``createdTime`` and ``autoNumber`` at the top level."""
+        record = self._request(
             "GET", f"/api/table/{table_id}/record/{record_id}", params={"fieldKeyType": field_key_type}
         )
+        return self._plain_dates(table_id, record) if field_key_type == "name" else record
 
     def create_record(self, table_id: str, fields: dict[str, Any], *, typecast: bool = False) -> Record:
-        """Create exactly one record (no batch create, so one conflict cannot fail others)."""
+        """Create exactly one record (no batch create, so one conflict cannot fail others).
+
+        The answer holds only ``id`` and the fields that were sent: NO createdTime, autoNumber
+        or system fields. Read the record back (``find_by_field`` / ``get_record``) for those."""
         body = {"fieldKeyType": "name", "typecast": typecast, "records": [{"fields": fields}]}
         data = self._request("POST", f"/api/table/{table_id}/record", json_body=body)
-        return data["records"][0]
+        return self._plain_dates(table_id, data["records"][0])
 
     def update_record(
         self, table_id: str, record_id: str, fields: dict[str, Any], *, typecast: bool = False
     ) -> Record:
+        """Update one record; a value of None clears the field. The answer holds the whole record
+        in ``fields`` (system fields included) but no top-level lastModifiedTime."""
         body = {"fieldKeyType": "name", "typecast": typecast, "record": {"fields": fields}}
-        return self._request("PATCH", f"/api/table/{table_id}/record/{record_id}", json_body=body)
+        record = self._request("PATCH", f"/api/table/{table_id}/record/{record_id}", json_body=body)
+        return self._plain_dates(table_id, record)
 
     # ---- safety net for the first-come ID rule ------------------------------
 
@@ -289,6 +360,10 @@ class TeableClient:
         missing = self.missing_unique_flags(table_ids, id_field_names)
         if missing:
             raise UniqueFlagError(missing)
+
+
+def _is_anonymous(user: Mapping[str, Any]) -> bool:
+    return any("anonymous" in str(user.get(k, "")).lower() for k in ("id", "name", "email"))
 
 
 def record_author(record: Record) -> str:

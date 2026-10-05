@@ -312,6 +312,8 @@ class Committer:
             log.warning("created %s %s but read-back failed: %s", draft.table, draft.key, exc)
             self.store.put_cached_record(draft.table, mine)
             return self._result(draft, COMMITTED, f"created; read-back check failed: {exc.message}", record=mine)
+        # Teable's create answer has no createdTime/autoNumber; the read-back copy has them.
+        mine = next((r for r in found if r["id"] == mine["id"]), mine)
         winner = min(found, key=_age_key) if found else mine
         if winner["id"] != mine["id"]:
             withdrawn = self._withdraw(draft, mine)
@@ -453,6 +455,10 @@ class Committer:
             raise
         except TeableError as exc:
             return self._result(draft, FAILED, f"{exc.message} (HTTP {exc.status}). Fix the data and commit again.")
+        try:  # the update answer has no top-level lastModifiedTime; the cache needs it
+            record = self.client.get_record(table_id, draft.record_id or "")
+        except TeableError as exc:
+            log.warning("updated %s %s but re-read failed: %s", draft.table, draft.key, exc)
         self.store.put_cached_record(draft.table, record)
         return self._result(draft, COMMITTED, record=record)
 

@@ -165,6 +165,25 @@ def test_scratch_check_does_not_pass_on_a_server_error(client, base_id, schema, 
         run_bootstrap(client, base_id=base_id, project_name="P", schema=schema, settings={})
 
 
+def test_scratch_check_does_not_pass_on_another_client_error(client, base_id, schema, monkeypatch):
+    """Only a unique violation proves the rule; a 404 or a not-null 400 must not count as refusal."""
+    run_bootstrap(client, base_id=base_id, project_name="P", schema=schema, settings={})
+    real_create = client.create_record
+    calls = {"scratch": 0}
+
+    def wrong_refusal(table_id, fields, **kwargs):
+        if "ma" in fields:
+            calls["scratch"] += 1
+            if calls["scratch"] == 2:
+                raise TeableError("field is empty", status=400, method="POST", path="/record",
+                                  code="validation_error", domain_code="validation.field.not_null")
+        return real_create(table_id, fields, **kwargs)
+
+    monkeypatch.setattr(client, "create_record", wrong_refusal)
+    with pytest.raises(BootstrapError, match="field is empty"):
+        run_bootstrap(client, base_id=base_id, project_name="P", schema=schema, settings={})
+
+
 # ---- acceptance test 4: unique flag removed -> commit must be refused ----------
 
 

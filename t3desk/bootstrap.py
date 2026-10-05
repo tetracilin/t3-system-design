@@ -205,7 +205,7 @@ def _scratch_duplicate_check(client: TeableClient, report: BootstrapReport,
     try:
         client.create_record(table_id, {id_name: scratch_id})
     except TeableError as exc:
-        if exc.status is not None and 400 <= exc.status < 500:
+        if exc.is_unique_violation:
             report.scratch_ok = True
             return
         raise BootstrapError(
