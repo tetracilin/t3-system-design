@@ -1,0 +1,75 @@
+# Decision trees (section 6). Questions run in order. A branch that is not written
+# (yes or no missing) means "go to the next question". "check" names a rule in
+# t3desk/rules.py; "screen" names a screen key.
+
+system_design:            # Thiết kế hệ thống
+  - q: "Mọi yêu cầu đã có mã R và mức Bắt buộc / Mong muốn?"
+    check: requirements_complete
+    no: {do: "Ghi yêu cầu", screen: yeu_cau}
+  - q: "Đã có ít nhất 2 kiến trúc để so sánh?"
+    check: two_architectures
+    no: {do: "Nêu thêm kiến trúc khác về nguyên lý", screen: kien_truc}
+  - q: "Đã chọn đúng một kiến trúc, có lý do?"
+    check: one_architecture_chosen
+    no: {do: "Chấm 3 điểm, chọn một, ghi lý do", screen: kien_truc}
+  - q: "Đã liệt kê đủ nút cấp 1 và chốt?"
+    check: gate_level_1
+    no: {do: "Liệt kê nút cấp 1, rồi chốt. Chưa tách cấp 2.", screen: cay}
+  - q: "Nút cấp 1 không mua được nguyên khối đã tách cấp 2 và chốt?"
+    check: gate_level_2
+    no: {do: "Tách cấp 2, rồi chốt. Chưa tìm OEM.", screen: cay}
+  - q: "Mọi yêu cầu Bắt buộc đã phân bổ về nút?"
+    check: all_must_allocated
+    no: {do: "Phân bổ: mỗi cặp yêu cầu + nút một dòng", screen: phan_bo}
+  - q: "Có yêu cầu chia ngân sách đang vượt giới hạn?"
+    check: budget_over
+    yes: {do: "Chia lại phần của từng nút", screen: phan_bo}
+  - q: "Mọi nút lá có người phụ trách, nút nghi chờ lâu xếp trước?"
+    check: leaves_assigned
+    no: {do: "Giao nút lá", screen: cay}
+  - q: "Có nút báo không ứng viên nào đạt?"
+    check: any_node_stuck
+    yes: {do: "Quyết định: nới yêu cầu, tách nút khác đi, hoặc đổi kiến trúc", screen: cay}
+    no: {do: "So sánh phương án ở buổi rà soát tuần", screen: tong_quan}
+
+designer:                 # Thiết kế nút, cho một nút lá
+  - q: "Cây hệ thống đã chốt cấp 2?"
+    check: gate_level_2
+    no: {do: "Chờ. Không viết thông số, không tìm OEM."}
+  - q: "Bạn đang mở nút khác chưa xong?"
+    check: other_node_open
+    yes: {do: "Làm xong nút đó trước", screen: nut}
+  - q: "Nút đã có thông số cho mọi yêu cầu được phân bổ?"
+    check: node_specs_cover_allocation
+    no: {do: "Viết thông số: min hoặc max, đơn vị, mức, mã yêu cầu gốc", screen: nut}
+  - q: "Đã có đủ ứng viên (3 đến 5)?"
+    check: node_enough_candidates
+    no: {do: "Tìm ứng viên, có link datasheet và ngày kiểm tra", screen: nut}
+  - q: "Mọi cặp ứng viên × thông số đã đối chiếu, có trích dẫn?"
+    check: node_checks_complete
+    no: {do: "Đối chiếu datasheet: nguyên văn, số đã quy đổi, trang", screen: nut}
+  - q: "Có ứng viên đạt mọi thông số Bắt buộc?"
+    check: node_has_passing_candidate
+    no: {do: "Báo Thiết kế hệ thống. Không tự nới thông số."}
+  - q: "Mua hàng đã có giá báo và thời gian chờ?"
+    check: node_sourcing_answered
+    no: {do: "Nút chuyển sang Chờ Mua hàng. Bạn được mở nút tiếp theo.", screen: mua_hang}
+    yes: {do: "Chọn một ứng viên, ghi lý do, gắn phương án", screen: nut}
+
+engineer:                 # Kỹ sư, mỗi ngày
+  - q: "Có bản nháp chưa commit?"
+    check: has_drafts
+    yes: {do: "Commit. Nếu trùng mã: nhận mã mới mà ứng dụng đề xuất.", screen: commit}
+  - q: "Có cảnh báo đỏ ở dòng của bạn?"
+    check: my_warnings
+    yes: {do: "Sửa trước khi làm việc mới", screen: tong_quan}
+  - q: "Có thẻ sai lệch giao cho bạn?"
+    check: my_change_cards
+    yes: {do: "Làm lại đúng nút bị ảnh hưởng, từ bước thông số", screen: nut}
+  - q: "Nút của bạn còn việc tiếp theo?"
+    check: my_next_actions
+    yes: {do: "Làm theo cây Thiết kế nút", screen: nut}
+    no: {do: "Hỏi Thiết kế hệ thống để nhận nút mới"}
+  - q: "Cuối ngày: các số kiểm tra đã về 0?"
+    check: counters_zero
+    no: {do: "Nêu ở giao ban 15 phút sáng mai", screen: tong_quan}

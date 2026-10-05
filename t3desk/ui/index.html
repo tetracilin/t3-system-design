@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="session" content="__SESSION__">
+<title>T3 Desk</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="shell" data-panel="open">
+  <nav id="nav" aria-label="nav"></nav>
+  <main id="main" tabindex="-1"></main>
+  <aside id="panel" aria-label="tree">
+    <div id="panel-head">
+      <button id="panel-toggle" type="button" data-i-title="panel_toggle"></button>
+      <span id="panel-title" data-i="panel_title"></span>
+      <button id="panel-wide" type="button" data-i-title="panel_wide">F1</button>
+    </div>
+    <div id="panel-body">
+      <div id="panel-node"></div>
+      <div id="tree-tabs" role="tablist"></div>
+      <div id="tree-view"></div>
+    </div>
+    <div id="panel-strip" data-i="panel_title"></div>
+  </aside>
+</div>
+<footer id="status" role="status"></footer>
+<div id="toast" role="alert" hidden></div>
+<div id="modal-root"></div>
+<script src="/tree.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

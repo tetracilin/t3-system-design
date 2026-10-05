@@ -1,0 +1,1 @@
+- test_main_without_ui_module_exits_cleanly crashed the interpreter: `from t3desk import server` returns the cached package attribute and ignores sys.modules["t3desk.server"]=None, so a real pywebview window opened. run_app now uses importlib.import_module("t3desk.server") and returns 2 with "not built yet" on ImportError. Test unchanged.

@@ -1,0 +1,12 @@
+id: task_outbox
+name: Task outbox (Paperclip TODO AI)
+version: 0.1.0
+config:
+  - {key: paperclip_url, label: "Paperclip TODO AI address (optional, UNVERIFIED push)"}
+  - {key: paperclip_token, label: "Paperclip token (optional)", secret: true}
+hosts:
+  - "{config:paperclip_url}"
+writes: [cong_viec]
+actions:
+  - {id: rebuild, label: "Cập nhật danh sách công việc", screens: [tong_quan.tasks], roles: [system_designer, designer, engineer, sourcing, pm]}
+events: [after_commit]

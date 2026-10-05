@@ -1,0 +1,16 @@
+# UNVERIFIED: no Hermes API reference exists yet. See README.md in this folder.
+id: hermes_skill
+name: Hermes skill (RFQ / RFP)
+version: 0.1.0
+config:
+  - {key: base_url, label: "Hermes API server address", default: "http://127.0.0.1:8642"}
+  - {key: token, label: "Hermes API token", secret: true}
+  - {key: skill_tao_rfq, label: "Skill name for Tạo RFQ", default: "rfq"}
+  - {key: skill_tao_rfp, label: "Skill name for Tạo RFP", default: "rfp"}
+hosts:
+  - "{config:base_url}"
+writes: [rfq]
+actions:
+  - {id: tao_rfq, label: "Tạo RFQ", screens: [mua_hang.selection, nut.current], roles: [system_designer, designer, engineer, sourcing, pm]}
+  - {id: tao_rfp, label: "Tạo RFP", screens: [nut.current, rfq.row], roles: [system_designer, designer, engineer, pm]}
+events: [on_job_poll]

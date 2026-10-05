@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "t3desk"
+version = "0.1.0"
+description = "T3 Desk: desktop app for T3 design data backed by Teable"
+requires-python = ">=3.11"
+dependencies = [
+    "pywebview",
+    "httpx",
+    "keyring",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+mcp = ["mcp"]
+
+[project.scripts]
+t3desk = "t3desk.main:main"
+
+[tool.setuptools.packages.find]
+include = ["t3desk*"]
+
+[tool.setuptools.package-data]
+t3desk = ["data/*.yaml", "ui/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-q"

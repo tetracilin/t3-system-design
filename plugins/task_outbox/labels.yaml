@@ -1,0 +1,11 @@
+# Task texts for cong_viec rows. Templates use str.format. Rows must be identical on every machine.
+buoc_title: "{node}: {action}"
+buoc_desc: "Nút {node} ({name}). Việc tiếp theo: {action}"
+cho_nhan_title: "{uv}: {action}"
+cho_nhan_desc: "Ứng viên {uv} ({hang} {model}) của nút {node} đã đạt, Mua hàng chưa nhận."
+sai_lech_title: "{ma_sl}: {text}"
+rfq_title: "{ma_rfq}: quá hạn trả lời {han}"
+rfq_desc: "{loai} {ma_rfq} gửi {vendor}, hạn trả lời {han}, chưa có trả lời."
+canh_bao_title: "{owner}: {count} cảnh báo"
+canh_bao_desc: "{lines}"
+unassigned: ""
