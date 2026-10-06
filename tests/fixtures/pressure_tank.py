@@ -61,8 +61,8 @@ def build() -> Tables:
         "cai_dat": [
             {"khoa": "ten_du_an", "gia_tri": "Bể áp lực"}, {"khoa": "so_uv_toi_thieu", "gia_tri": "3"},
             {"khoa": "so_uv_toi_da", "gia_tri": "5"}, {"khoa": "chot_cap_1", "gia_tri": "Có"},
-            {"khoa": "chot_cap_2", "gia_tri": "Có"}, {"khoa": "ty_gia_VND", "gia_tri": "0.000001"},
-            {"khoa": "ty_gia_USD", "gia_tri": "0.025"}, {"khoa": "ty_gia_EUR", "gia_tri": "0.027"},
+            {"khoa": "chot_cap_2", "gia_tri": "Có"}, {"khoa": "vnd_per_usd", "gia_tri": "25000"},
+            {"khoa": "vnd_per_eur", "gia_tri": "27000"},
         ],
         "yeu_cau": [
             {"ma_yc": "R1", "mo_ta": "Độ nhạy", "muc": "Bắt buộc", "trang_thai": "Đã chốt"},

@@ -66,6 +66,8 @@ def validate_record(
     elif id_name in fields and key is not None and fields[id_name] != key:
         issues.append(Issue(id_name, "id_immutable", f"{id_name} cannot be changed after commit"))
 
+    issues += _check_exchange_rate(schema, table, id_name, fields, key if op != "create" else None)
+
     own_id = fields.get(id_name) if op == "create" else key
     for name, spec in specs.items():
         if name == id_name and op == "create":
@@ -80,6 +82,36 @@ def validate_record(
         issues += _check_value(name, spec, value)
         issues += _check_refs(table, name, spec, value, known_ids, own_id)
     return issues
+
+
+THOUSANDS_RE = re.compile(r"^[1-9]\d{0,2}([.,]\d{3})+$")  # "27.000" or "27,000": ambiguous, refused
+
+
+def _check_exchange_rate(
+    schema: schema_mod.Schema, table: str, id_name: str, fields: Mapping[str, Any], key: str | None
+) -> list[Issue]:
+    """A rate row (VND per ONE unit) must be a positive plain number, and not the old unit."""
+    cfg = schema.get("exchange_rates") or {}
+    if table != cfg.get("table"):
+        return []
+    rate_key = str(fields.get(id_name) or key or "")
+    prefix = cfg["key_prefix"]
+    if not rate_key.startswith(prefix) or "gia_tri" not in fields or is_empty(fields.get("gia_tri")):
+        return []
+    msgs = schema_mod.load_labels()["rate_messages"]
+    raw = str(fields["gia_tri"]).strip().replace(" ", "")
+    value: float | None = None
+    if not THOUSANDS_RE.match(raw):
+        try:
+            value = float(raw.replace(",", "."))
+        except ValueError:
+            value = None
+    if value is None or not value > 0 or value == float("inf"):
+        return [Issue("gia_tri", "rate_invalid", msgs["not_positive"])]
+    currency = rate_key[len(prefix):].upper()
+    if currency != str(cfg["base_currency"]).upper() and value < cfg["min_foreign"]:
+        return [Issue("gia_tri", "rate_old_unit", msgs["old_unit"].format(value=raw))]
+    return []
 
 
 def _check_id(schema: schema_mod.Schema, table: str, id_name: str, value: Any) -> list[Issue]:

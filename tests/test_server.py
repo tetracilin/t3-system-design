@@ -148,7 +148,7 @@ def test_every_label_the_ui_asks_for_exists() -> None:
     expected |= {"state_" + r for r in ("pass", "fail", "unchecked")} | {"op_create", "op_update"}
     expected |= {"gate_" + g for g in server.GATE_KEYS}
     expected |= {"set_" + k for k in re.findall(r"row\('([a-z_]+)'", js)}
-    expected |= {"v_" + c for c in ("id_format", "required", "not_allowed", "type", "range", "unknown_field",
+    expected |= {"v_" + c for c in ("id_format", "required", "not_allowed", "type", "range", "unknown_field", "rate_invalid", "rate_old_unit",
                                    "missing_ref", "id_immutable", "self_ref")}
     expected |= {"extra_" + c for c in ("n_nodes", "level", "cost", "next_action", "result", "price_mvnd", "order_by")}
     src = Path(server.__file__).read_text(encoding="utf-8")
@@ -337,6 +337,22 @@ def test_system_designer_may_set_gate_and_choose(loaded: Env) -> None:
     nodes = loaded.get("/api/tree_nodes")
     assert nodes["gates"] == {"chot_cap_1": True, "chot_cap_2": False} and nodes["can_gate"]
     assert loaded.get("/api/architectures")["can_choose"]
+
+
+def test_choose_architecture_that_is_still_a_new_draft(loaded: Env) -> None:
+    """Choosing KT-C before it is committed sends only the status and reason; ma_kt must not be 'required'."""
+    loaded.set_identity("an", "system_designer")
+    status, data = loaded.draft("kien_truc", {"ma_kt": "KT-C", "ten": "C", "trang_thai": "Đề xuất",
+                                              "diem_ky_thuat": 4, "diem_nguon_hang": 3, "diem_thoi_gian": 5})
+    assert status == 200, data
+    draft_id = data["draft"]["id"]
+    status, data = loaded.post("/api/draft", {"table": "kien_truc", "op": "update", "key": "KT-C", "draft_id": draft_id,
+                                              "fields": {"trang_thai": "Chọn", "ly_do": "Best total score"}})
+    assert status == 200, data
+    assert data["draft"]["op"] == "create" and data["draft"]["valid"]
+    assert data["draft"]["fields"]["ma_kt"] == "KT-C" and data["draft"]["fields"]["ten"] == "C"
+    assert data["draft"]["fields"]["trang_thai"] == "Chọn" and data["draft"]["fields"]["diem_ky_thuat"] == 4
+    assert loaded.app.store.count_drafts() == 1
 
 
 def test_role_is_rechecked_at_commit(loaded: Env) -> None:

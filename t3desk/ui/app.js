@@ -261,8 +261,18 @@ function visibleColumns(table, rows) {
   return cols;
 }
 
+function settingLabel(key) {
+  return ((S.meta.labels.settings_keys || {})[key]) || '';
+}
+
+function isRateKey(table, key) {
+  const cfg = S.meta.schema.exchange_rates || {};
+  return table === cfg.table && !!cfg.key_prefix && String(key || '').startsWith(cfg.key_prefix);
+}
+
 function cellText(table, name, value) {
   if (value === null || value === undefined) return '';
+  if (table === 'cai_dat' && name === 'khoa' && settingLabel(value)) return settingLabel(value) + ' (' + value + ')';
   return String(value);
 }
 
@@ -462,7 +472,10 @@ async function openForm(opts) {
     const readonly = name === idName && isUpdate;
     const el = widget(table, name, fs, values[name], refIds[fs.ref], readonly);
     inputs[name] = el;
-    const label = h('label', { for: 'fld-' + name, text: fieldLabel(table, name) + (fs.required ? ' *' : '') });
+    let labelText = fieldLabel(table, name);
+    if (table === 'cai_dat' && name === 'gia_tri' && settingLabel(values.khoa)) labelText = settingLabel(values.khoa);
+    if (isRateKey(table, values.khoa) && name === 'gia_tri') { el.setAttribute('inputmode', 'decimal'); el.setAttribute('placeholder', '27000'); }
+    const label = h('label', { for: 'fld-' + name, text: labelText + (fs.required ? ' *' : '') });
     const cell = h('div', { class: 'f' + (fs.type === 'longtext' ? ' wide' : ''), 'data-field': name }, label, el, el._datalist || null);
     if (name === idName && spec.id.example) cell.appendChild(h('span', { class: 'muted', text: T('id_example', { ex: spec.id.example }) }));
     if (fs.multi) cell.appendChild(h('span', { class: 'muted', text: T('multi_hint', { sep: fs.multi }) }));

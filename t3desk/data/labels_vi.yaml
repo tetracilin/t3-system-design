@@ -149,9 +149,18 @@ settings_keys:
   trong_so_ky_thuat: "Trọng số kỹ thuật"
   trong_so_nguon_hang: "Trọng số nguồn hàng"
   trong_so_thoi_gian: "Trọng số thời gian"
-  ty_gia_VND: "Tỷ giá VND (triệu đồng)"
-  ty_gia_USD: "Tỷ giá USD (triệu đồng)"
-  ty_gia_EUR: "Tỷ giá EUR (triệu đồng)"
+  vnd_per_usd: "1 USD = ? VND"
+  vnd_per_eur: "1 EUR = ? VND"
+  # VND is always 1 (built in); old rows ty_gia_VND / ty_gia_USD / ty_gia_EUR are obsolete.
+  vnd_per_vnd: "1 VND = ? VND (luôn là 1, không cần nhập)"
+  ty_gia_VND: "Tỷ giá VND cũ (triệu đồng, không còn dùng)"
+  ty_gia_USD: "Tỷ giá USD cũ (triệu đồng, không còn dùng)"
+  ty_gia_EUR: "Tỷ giá EUR cũ (triệu đồng, không còn dùng)"
+
+# Messages of the exchange-rate check in validation.py.
+rate_messages:
+  not_positive: "Tỷ giá phải là số lớn hơn 0, nhập số nguyên không có dấu chấm phẩy nghìn, ví dụ 27000 (1 EUR = 27000 VND)."
+  old_unit: "Tỷ giá phải tính bằng đồng cho 1 đơn vị ngoại tệ, ví dụ 1 EUR = 27000 VND. Giá trị {value} trông như đơn vị cũ (triệu đồng): nhập 27000 chứ không phải 0.027."
 
 # Texts produced by rules.py and decision_tree.py. Placeholders use str.format names.
 rules:

@@ -17,7 +17,7 @@ tests/fixtures/{__init__,pressure_tank}.py, tests/test_rules.py, tests/test_deci
 - Candidate result uses only specifications of the candidate's own node. A failing nice-to-have (Mong muốn) check does not fail the candidate.
 - "Candidates" for row 7 (có n) and the maximum rule exclude `Loại`; row 8 counts unchecked cells of non-rejected candidates only (includes `Không rõ`).
 - Row 5/6 use the first `Chọn` candidate of the leaf. Step numbers: row 4 = 2, row 7 = 3, row 8 = 4, row 11 = 5 ("one node at a time" uses rows 7, 8, 11).
-- Price: quoted price with the `mua_hang.tien_te`, else published price with `ung_vien.tien_te`; empty currency = VND; rates are `ty_gia_<CUR>` (million VND per unit). Unknown currency gives no price (cost 0 for that leaf).
+- Price: quoted price with the `mua_hang.tien_te`, else published price with `ung_vien.tien_te`; empty currency = VND; rates are `vnd_per_<cur>` (VND per one unit; million VND = amount * rate / 1_000_000; old `ty_gia_<CUR>` ignored). Unknown currency gives no price (cost 0 for that leaf).
 - Leaf cost = `so_luong` (default 1) x price; a leaf with no chosen candidate costs 0; a parent sums leaves only (parent quantity is ignored).
 - Budget: only `Chia ngân sách` rows count; method is the first non-empty `cach_cong` of the requirement; limit is the largest limit among its rows; over means total > limit.
   Counter "budget rows over" counts the budget rows of each over-limit requirement.

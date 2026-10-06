@@ -6,6 +6,7 @@ import re
 
 import pytest
 
+from t3desk import rules
 from t3desk import schema as s
 
 EXPECTED_TABLES = [
@@ -77,7 +78,11 @@ def test_default_settings_cover_required_keys(schema):
     keys = {r["khoa"] for r in schema["defaults"]["cai_dat"]}
     assert {"ten_du_an", "ngan_sach_tr", "so_uv_toi_thieu", "so_uv_toi_da", "chot_cap_1", "chot_cap_2"} <= keys
     assert len([k for k in keys if k.startswith("trong_so_")]) == 3
-    assert {"ty_gia_VND", "ty_gia_USD"} <= keys
+    assert {"vnd_per_usd", "vnd_per_eur"} <= keys
+    assert not any(k.startswith("ty_gia_") for k in keys)
+    cfg = schema["exchange_rates"]
+    assert all(k.startswith(cfg["key_prefix"]) for k in keys if "_per_" in k)
+    assert rules.RATE_KEY_PREFIX == cfg["key_prefix"]
 
 
 def test_teable_payload_for_each_type(schema):

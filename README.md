@@ -25,6 +25,8 @@ python -m t3desk bootstrap --help # create tables and fields in a Teable base
 python scripts/smoke.py           # start, load one screen, exit
 ```
 
+On Windows, `run.bat` (or `run.bat --browser`) starts the app with the project's `.venv`, so the system Python does not need the dependencies. Running `python -m t3desk` with a Python that lacks them fails with `No module named httpx`.
+
 Optional: `pip install -e ".[mcp]"` for the gbrain MCP plugin.
 
 ## Tests
@@ -43,6 +45,16 @@ here, after checking every path and payload in `t3desk/teable_client.py` against
 reference). The compose file in `deploy/` pins image tags that are marked "verify".
 
 Setup, backup and upgrade: `deploy/README.md`. Each user uses their own Teable token.
+
+## Exchange rates
+
+Rates in `cai_dat` are **VND per one unit** of the currency: `vnd_per_eur` = 27000 means
+1 EUR = 27000 VND (USD default 25000; VND is always 1 and has no row). The USD and EUR defaults are
+placeholders: confirm the real rates. `rules.py` still reports every cost in million VND
+(`amount * rate / 1_000_000`, so 1000 EUR = 27 million VND). The old `ty_gia_<CUR>` rows (million
+VND per unit, e.g. 0.027) are obsolete: never read, never deleted; bootstrap reports them and adds
+the new rows without touching anything else. A rate below 1 for USD or EUR is refused as the old
+unit. See `docs/notes/exchange-rate.md`.
 
 ## Known limitation: stale writes
 

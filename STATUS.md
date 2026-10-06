@@ -38,6 +38,7 @@ Merged from `docs/notes/*.md` (commit, foundation, packaging, plugins, rules, ui
 - Several areas wrote tests together with code rather than strictly test-first (commit, UI).
 - Section 12 test 4 is covered at client level (foundation) and commit level (commit); the commit module must call `ensure_unique_flags`.
 - Image tags are pinned in the compose file; build scripts were not executed.
+- Exchange-rate unit change (6 Oct 2026): rates are now VND per ONE unit (`vnd_per_usd` 25000, `vnd_per_eur` 27000; VND built in as 1) under NEW keys; costs stay in million VND. The old `ty_gia_<CUR>` rows (million VND per unit) are ignored, never deleted; bootstrap reports them as obsolete and adds the new rows. USD and EUR values are placeholders: confirm real rates. Requirements section 4 and 7 still describe the old wording ("one exchange rate per currency", "rates in `cai_dat`"); not edited here.
 - Extra module `t3desk/schema.py` is not in the section 12 layout.
 
 ## Questions
@@ -49,4 +50,4 @@ Inputs the spec (section 13) lists as needed from Viet; adapters are built again
 - gbrain: how to reach the MCP server (command or URL) and which tools to offer.
 - Paperclip TODO AI: pull from `cong_viec` or push; for push the endpoint, authentication and task fields.
 - Data leaving the LAN: may RFQ and RFP payloads for defence projects go to Hermes, or is a per-project switch needed to block all plugin sends?
-- Spec gaps inferred (see notes): `doi_chieu` extra fields, choice sets for `mua_hang`, `moc`, `sai_lech`, `cong_viec` status, placeholder exchange rates and scoring weights; confirm or correct.
+- Spec gaps inferred (see notes): `doi_chieu` extra fields, choice sets for `mua_hang`, `moc`, `sai_lech`, `cong_viec` status, placeholder exchange rates (USD 25000, EUR 27000 VND per unit: confirm real rates) and scoring weights; confirm or correct.

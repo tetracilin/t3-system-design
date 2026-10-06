@@ -210,6 +210,8 @@ ui:
   v_missing_ref: "Mã tham chiếu chưa tồn tại"
   v_id_immutable: "Không đổi được mã sau khi commit"
   v_self_ref: "Không được trỏ về chính nó"
+  v_rate_invalid: "Tỷ giá không hợp lệ"
+  v_rate_old_unit: "Tỷ giá theo đơn vị cũ"
 
   # errors: what failed and what to do. The server's own message is shown under each.
   err_invalid: "Dữ liệu chưa hợp lệ. Sửa các ô báo đỏ rồi lưu lại."

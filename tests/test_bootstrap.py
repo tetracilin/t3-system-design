@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -82,6 +83,32 @@ def test_default_cai_dat_rows_written_once_and_never_overwritten(fake_teable, cl
     assert after["so_uv_toi_da"] == "7"
     assert after["ten_du_an"] == "Test project"
     assert len(fake_teable.records("cai_dat")) == len(expected)
+
+
+def test_bootstrap_adds_new_rate_rows_to_an_old_base_and_changes_nothing_else(
+    fake_teable, client, base_id, schema
+):
+    old_schema = copy.deepcopy(schema)  # what the previous version wrote
+    old_schema["defaults"]["cai_dat"] = [r for r in old_schema["defaults"]["cai_dat"]
+                                         if not r["khoa"].startswith("vnd_per_")] + [
+        {"khoa": "ty_gia_VND", "gia_tri": "0.000001"}, {"khoa": "ty_gia_USD", "gia_tri": "0.025"},
+        {"khoa": "ty_gia_EUR", "gia_tri": "0.027"}]
+    first = run_bootstrap(client, base_id=base_id, project_name="Old", schema=old_schema, settings={})
+    assert first.obsolete_settings == []  # the old schema did not know the old keys as obsolete
+    before = {r["fields"]["khoa"]: dict(r["fields"]) for r in fake_teable.records("cai_dat")}
+    snap_other = fake_teable.snapshot(skip_tables=(SCRATCH, "cai_dat"))
+    report = run_bootstrap(client, base_id=base_id, project_name="New", schema=schema, settings={})
+    after = {r["fields"]["khoa"]: dict(r["fields"]) for r in fake_teable.records("cai_dat")}
+    assert set(report.created_settings) == {"vnd_per_usd", "vnd_per_eur"}
+    assert after["vnd_per_usd"]["gia_tri"] == "25000" and after["vnd_per_eur"]["gia_tri"] == "27000"
+    assert {k: v for k, v in after.items() if k in before} == before  # every old row untouched
+    assert before["ty_gia_EUR"]["gia_tri"] == "0.027"  # not deleted, not converted
+    assert fake_teable.snapshot(skip_tables=(SCRATCH, "cai_dat")) == snap_other
+    assert report.obsolete_settings == ["ty_gia_VND", "ty_gia_USD", "ty_gia_EUR"]
+    text = " ".join(report.lines())
+    assert "OBSOLETE" in text and "ty_gia_EUR" in text
+    again = run_bootstrap(client, base_id=base_id, project_name="New", schema=schema, settings={})
+    assert again.created_settings == [] and again.obsolete_settings == report.obsolete_settings
 
 
 def test_table_ids_are_saved_in_settings_and_file_without_token(client, base_id, schema, tmp_path: Path):

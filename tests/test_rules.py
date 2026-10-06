@@ -192,8 +192,38 @@ def test_candidate_result_fail_wins_over_incomplete() -> None:
 
 def test_price_prefers_quote_and_converts_with_rates() -> None:
     a = analyse(build())
-    assert a.price_used("UV-001") == pytest.approx(1200 * 0.025)  # quoted USD
-    assert a.price_used("UV-002") == pytest.approx(1000 * 0.025)  # published USD, no quote
+    assert a.price_used("UV-001") == pytest.approx(1200 * 25000 / 1e6)  # quoted USD: 30 million VND
+    assert a.price_used("UV-002") == pytest.approx(1000 * 25000 / 1e6)  # published USD, no quote
+
+
+def test_1000_eur_is_27_million_vnd() -> None:
+    t = build()
+    row(t, "ung_vien", "ma_uv", "UV-002")["gia_cong_bo"] = 1000
+    row(t, "ung_vien", "ma_uv", "UV-002")["tien_te"] = "EUR"
+    a = analyse(t)
+    assert a.rate("EUR") == 27000
+    assert a.price_used("UV-002") == pytest.approx(27.0)
+    assert rules.to_million_vnd(1000, 27000) == pytest.approx(27.0)
+
+
+def test_vnd_rate_is_always_one_and_empty_currency_is_vnd() -> None:
+    t = build()
+    t["cai_dat"].append({"khoa": "vnd_per_vnd", "gia_tri": "5"})  # ignored: VND is built in
+    a = analyse(t)
+    assert a.rate("VND") == 1.0 and a.rate("") == 1.0
+
+
+def test_old_ty_gia_rows_are_ignored() -> None:
+    t = build()
+    t["cai_dat"] = [r for r in t["cai_dat"] if not r["khoa"].startswith("vnd_per_")]
+    t["cai_dat"] += [{"khoa": "ty_gia_EUR", "gia_tri": "0.027"}, {"khoa": "ty_gia_USD", "gia_tri": "0.025"},
+                     {"khoa": "ty_gia_VND", "gia_tri": "0.000001"}]
+    a = analyse(t)
+    assert a.rate("EUR") is None and a.rate("USD") is None  # old rows are not read, not misread as VND
+    assert a.rate("VND") == 1.0
+    row(t, "ung_vien", "ma_uv", "UV-002")["tien_te"] = "USD"
+    assert analyse(t).price_used("UV-002") is None
+    row(t, "cai_dat", "khoa", "ty_gia_EUR")  # rows still there
 
 
 def test_price_vnd_and_unknown_currency() -> None:

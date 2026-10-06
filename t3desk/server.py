@@ -281,7 +281,7 @@ class App:
 
     def meta(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         return {
-            "schema": {"tables": self.schema["tables"]},
+            "schema": {"tables": self.schema["tables"], "exchange_rates": self.schema.get("exchange_rates", {})},
             "labels": self.labels,
             "screens": list(SCREENS),
             "roles": list(ROLES),
@@ -529,7 +529,10 @@ class App:
         key = _s(body.get("key")) or _s(fields.get(id_name)) or (existing.key if existing else "")
         self.check_role_for(table, key, fields)
 
-        if op == "create":
+        if existing is not None and existing.op == "create" and _s(body.get("op")) == "update":
+            # a partial change (e.g. choosing an architecture) to a not-yet-committed new record
+            merged = {**existing.fields, **{k: v for k, v in fields.items() if k != id_name}}
+        elif op == "create":
             merged = fields
         else:
             merged = {k: v for k, v in fields.items() if k != id_name}

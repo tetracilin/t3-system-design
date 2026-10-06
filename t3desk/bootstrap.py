@@ -50,6 +50,7 @@ class BootstrapReport:
     created_tables: list[str] = field(default_factory=list)
     created_fields: list[str] = field(default_factory=list)  # "table.field"
     created_settings: list[str] = field(default_factory=list)  # cai_dat keys
+    obsolete_settings: list[str] = field(default_factory=list)  # old rows found, kept, never read
     mismatches: list[Mismatch] = field(default_factory=list)
     scratch_table_id: str = ""
     scratch_ok: bool = False
@@ -69,6 +70,10 @@ class BootstrapReport:
         out += [f"created table: {t}" for t in self.created_tables]
         out += [f"created field: {f}" for f in self.created_fields]
         out += [f"created setting: {k}" for k in self.created_settings]
+        if self.obsolete_settings:
+            out.append("OBSOLETE settings kept and no longer used (old unit, million VND per unit; "
+                       "the new rates are the vnd_per_* rows, VND per 1 unit): "
+                       + ", ".join(self.obsolete_settings))
         out += [f"DIFFERENCE {m}" for m in self.mismatches]
         if not (self.changed or self.mismatches):
             out.append("nothing to change, no differences")
@@ -172,6 +177,8 @@ def _write_default_settings(client: TeableClient, report: BootstrapReport, sch: 
     table_id = report.table_ids["cai_dat"]
     key_field = schema_mod.id_field(sch, "cai_dat")
     present = {r["fields"].get(key_field) for r in client.list_all_records(table_id)}
+    obsolete = sch.get("exchange_rates", {}).get("obsolete_keys", [])
+    report.obsolete_settings = [k for k in obsolete if k in present]
     for row in sch["defaults"]["cai_dat"]:
         key = row[key_field]
         if key in present:

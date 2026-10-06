@@ -84,10 +84,19 @@ COUNTER_ORDER = (
     "passing_not_picked_up", "chosen_no_quote", "chosen_no_lead_time", "rows_with_warning",
 )
 SOON_DAYS = 14
-DEFAULT_RATES = {"VND": 0.000001}
+RATE_KEY_PREFIX = "vnd_per_"  # cai_dat key = prefix + lower-case currency; value = VND per ONE unit
+BASE_CURRENCY = "VND"
+VND_PER_MILLION = 1_000_000
+# Built in: VND is always 1. Old ty_gia_<CUR> rows (million VND per unit) are never read.
+DEFAULT_RATES = {BASE_CURRENCY: 1.0}
 
 
 # ---------------------------------------------------------------- small helpers
+
+def to_million_vnd(amount: float, rate_vnd: float) -> float:
+    """``amount`` in a currency worth ``rate_vnd`` VND per unit, as million VND."""
+    return amount * rate_vnd / VND_PER_MILLION
+
 
 def _s(value: Any) -> str:
     return "" if value is None else str(value).strip()
@@ -380,10 +389,12 @@ class Analysis:
     # -- price and cost --------------------------------------------------------
 
     def rate(self, currency: str) -> float | None:
-        """Million VND per one unit of currency, from cai_dat (empty currency means VND)."""
-        cur = (_s(currency) or "VND").upper()
-        value = _num(self.settings.get(f"ty_gia_{cur}"))
-        return value if value is not None else DEFAULT_RATES.get(cur)
+        """VND per ONE unit of currency, from cai_dat (empty currency means VND, always 1)."""
+        cur = (_s(currency) or BASE_CURRENCY).upper()
+        if cur == BASE_CURRENCY:
+            return DEFAULT_RATES[BASE_CURRENCY]
+        value = _num(self.settings.get(f"{RATE_KEY_PREFIX}{cur.lower()}"))
+        return value if value is not None and value > 0 else DEFAULT_RATES.get(cur)
 
     def price_used(self, uv: str) -> float | None:
         """Quoted price from mua_hang if present, else published price; million VND."""
@@ -395,7 +406,7 @@ class Analysis:
         rate = self.rate(currency or "")
         if amount is None or rate is None:
             return None
-        return amount * rate
+        return to_million_vnd(amount, rate)
 
     def node_cost(self, node: str) -> float:
         """Leaf = quantity x price of the chosen candidate; parent = sum of its leaves."""

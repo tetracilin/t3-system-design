@@ -12,7 +12,7 @@ t3desk/data/{schema.yaml,labels_vi.yaml}, tests/{fake_teable,conftest,test_boots
 - Choice sets for `uu_tien` (H, M, L), `loai_gia`, `nguoi_tim`, `loai` (RFQ, RFP) copied from the requirements.
 - Reference fields (validated before commit): `yc_then_chot` (multi, `;`), `thay_the`, `ds_ma_uv`, `ds_ma_nut`, `phuong_an` is NOT a reference.
   `ma_yc_goc` also accepts the literal `Dẫn xuất` (`ref_extra`). `mua_hang.ma_uv` is both the ID and a reference to ung_vien.
-- Money: `tien_te` is free text; `cai_dat` rate rows are `ty_gia_<CUR>` holding million VND per one unit (VND 0.000001, USD 0.025, EUR 0.027 are placeholders).
+- Money: `tien_te` is free text; `cai_dat` rate rows are `vnd_per_<cur>` holding VND per ONE unit (USD 25000, EUR 27000 placeholders; VND is built in as 1); old `ty_gia_<CUR>` rows are obsolete, see `exchange-rate.md`.
 - Scoring weights keys: trong_so_ky_thuat 0.5, trong_so_nguon_hang 0.3, trong_so_thoi_gian 0.2 (placeholders). Gates default `Không`.
   `cai_dat.gia_tri` is single-line text for every key; consumers parse numbers.
 - rfq IDs: `RFQ-001` and `RFP-001` each have their own counter (`prefixes` list in schema).

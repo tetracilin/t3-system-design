@@ -246,3 +246,28 @@ def test_known_ids_from_store_unions_cache_and_own_create_drafts(schema, tmp_pat
         bad = store.add_draft("ung_vien", "ma_uv", {"ma_uv": "UV-002", "ma_nut": "N3", "model": "m",
                                                     "trang_thai": "Ứng viên"})
         assert [i.code for i in validation.validate_store_draft(schema, store, bad.id)] == ["missing_ref"]
+
+
+# ---- exchange-rate validation (VND per one unit) ------------------------------
+
+@pytest.mark.parametrize("key, value", [("vnd_per_eur", "27000"), ("vnd_per_usd", "25000.5"),
+                                        ("vnd_per_eur", "1"), ("ten_du_an", "0.027"), ("ngan_sach_tr", "abc")])
+def test_rate_accepts_plain_positive_numbers_and_ignores_other_keys(schema, key, value):
+    assert codes("cai_dat", {"khoa": key, "gia_tri": value}, schema) == set()
+
+
+@pytest.mark.parametrize("value", ["0.027", "0,025", "0.5"])
+def test_rate_rejects_old_unit_values_with_a_vietnamese_message(schema, value):
+    found = validation.validate_record(schema, "cai_dat", {"khoa": "vnd_per_eur", "gia_tri": value}, known_ids=KNOWN)
+    assert [i.code for i in found] == ["rate_old_unit"]
+    assert "27000" in found[0].message and "triệu đồng" in found[0].message
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc", "27.000", "27,000", "inf"])
+def test_rate_rejects_non_positive_and_non_numbers(schema, value):
+    assert codes("cai_dat", {"khoa": "vnd_per_usd", "gia_tri": value}, schema) == {"rate_invalid"}
+
+
+def test_rate_update_uses_the_key_of_the_record(schema):
+    assert codes("cai_dat", {"gia_tri": "0.027"}, schema, op="update", key="vnd_per_eur") == {"rate_old_unit"}
+    assert codes("cai_dat", {"gia_tri": "27000"}, schema, op="update", key="vnd_per_eur") == set()

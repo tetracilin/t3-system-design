@@ -247,7 +247,10 @@ tables:
 
 # Rows written to cai_dat by bootstrap if the key is missing (never overwritten).
 # "$project_name" is replaced by the project name given to bootstrap.
-# Exchange rates are million VND per one unit of the currency (inferred).
+# Exchange rates are VND per ONE unit of the currency (1 EUR = 27000 VND); rules.py converts
+# costs to million VND. The USD and EUR values are placeholders: confirm the real rates.
+# VND is always 1 (built in, no row). The old ty_gia_<CUR> rows (million VND per unit) are
+# obsolete: never read, never deleted.
 defaults:
   cai_dat:
     - {khoa: ten_du_an, gia_tri: "$project_name"}
@@ -259,6 +262,16 @@ defaults:
     - {khoa: trong_so_ky_thuat, gia_tri: "0.5"}
     - {khoa: trong_so_nguon_hang, gia_tri: "0.3"}
     - {khoa: trong_so_thoi_gian, gia_tri: "0.2"}
-    - {khoa: ty_gia_VND, gia_tri: "0.000001"}
-    - {khoa: ty_gia_USD, gia_tri: "0.025"}
-    - {khoa: ty_gia_EUR, gia_tri: "0.027"}
+    - {khoa: vnd_per_usd, gia_tri: "25000"}
+    - {khoa: vnd_per_eur, gia_tri: "27000"}
+
+# Exchange-rate settings in cai_dat: key = key_prefix + lower-case currency code, value = VND
+# per one unit. A rate below min_foreign for a currency other than base_currency is rejected
+# (it is almost certainly the old million-VND unit, such as 0.027). obsolete_keys are old rows
+# that bootstrap reports and never deletes.
+exchange_rates:
+  table: cai_dat
+  key_prefix: vnd_per_
+  base_currency: VND
+  min_foreign: 1
+  obsolete_keys: [ty_gia_VND, ty_gia_USD, ty_gia_EUR]

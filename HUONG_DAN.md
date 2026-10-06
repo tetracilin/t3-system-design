@@ -17,4 +17,9 @@
 10. **Gửi RFQ, RFP (plugin).** Ứng dụng hiện đúng nội dung và máy đích để bạn xem trước khi gửi.
     Nội dung không chứa giá của nhà cung cấp khác, ngân sách hay điểm.
 
+11. **Tỷ giá** (màn hình Khởi tạo, phần cài đặt dự án): nhập số đồng cho 1 đơn vị ngoại tệ, ví dụ
+    `1 EUR = 27000 VND`, `1 USD = 25000 VND`; VND luôn bằng 1. Không nhập 0.027: giá trị nhỏ hơn 1
+    bị từ chối. Tỷ giá mặc định là số tạm, cần xác nhận tỷ giá thật. Các dòng `ty_gia_*` cũ (đơn vị
+    triệu đồng) không còn dùng và không bị xóa. Chi phí vẫn hiện theo triệu đồng.
+
 Cần trợ giúp: hỏi người phụ trách hệ thống. Chi tiết kỹ thuật xem `README.md`.
