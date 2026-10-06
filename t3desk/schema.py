@@ -154,6 +154,11 @@ def _next_letter(spec: dict[str, Any], ids: list[str]) -> str | None:
 
 def _next_tree(spec: dict[str, Any], ids: list[str], parent: str | None) -> str:
     prefix = spec["prefix"]
+    root = prefix + "0"
+    if parent is None and root not in ids:
+        return root  # an empty tree starts with the root node
+    if parent == root:
+        parent = None  # level 1 nodes are N1, N2 (never N0.1): a child of the root
     if parent is None:
         # Level 1 under the root: N1, N2, ...
         numbers = [int(i[len(prefix):]) for i in ids if re.fullmatch(re.escape(prefix) + r"[1-9]\d*", i)]

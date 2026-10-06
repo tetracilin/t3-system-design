@@ -114,6 +114,11 @@ def test_teable_payload_for_each_type(schema):
         ("nut", ["N0", "N1", "N1.1", "N1.2"], {"parent": "N1"}, "N1.3"),
         ("nut", ["N1", "N1.1.1"], {"parent": "N1.1"}, "N1.1.2"),
         ("nut", ["N1"], {"parent": "N2"}, "N2.1"),
+        # regression (predator flow): an empty tree starts at the root, and a child of the root is N1, not N0.1
+        ("nut", [], {}, "N0"),
+        ("nut", ["N0"], {"parent": "N0"}, "N1"),
+        ("nut", ["N0", "N1", "N2"], {"parent": "N0"}, "N3"),
+        ("nut", [], {"parent": "N0"}, "N1"),
         ("moc", [], {}, None),
         ("doi_chieu", [], {}, None),
         ("cai_dat", [], {}, None),
