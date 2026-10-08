@@ -44,6 +44,9 @@ STATIC_TYPES = {
     "index.html": "text/html; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
     "tree.js": "text/javascript; charset=utf-8",
+    "notes.js": "text/javascript; charset=utf-8",
+    "grid.js": "text/javascript; charset=utf-8",
+    "keys.js": "text/javascript; charset=utf-8",
     "style.css": "text/css; charset=utf-8",
 }
 SESSION_HEADER = "X-T3-Session"

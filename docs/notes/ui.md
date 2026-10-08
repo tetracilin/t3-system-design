@@ -44,3 +44,11 @@ t3desk/data/labels_ui_vi.yaml, tests/test_server.py, scripts/smoke.py.
   a tree action click and checked the SVG is 328 px wide in the 360 px panel with no horizontal scroll. That walk is a scratch script, not part of the repo tests; the repo tests cover the server, labels and JS syntax (via `node --check` when node exists).
 - Keyboard shortcut Ctrl or Cmd + S on pywebview's Windows and macOS back ends (the key event reaches the page in a browser; native menus may intercept it elsewhere).
 - Everything the other notes list as unverified against a real Teable still applies: the UI only calls the fake.
+
+
+## UI v2 (9 Oct 2026) replaces most of the above
+
+The notes above describe the first UI (three parts, forms, 11 screens). Since 9 Oct 2026 the UI is the four-pane
+workspace of `docs/UI-V2-SPEC.md`: files `ui/{index.html,app.js,grid.js,notes.js,keys.js,tree.js,style.css}`, 12 screens,
+no form for adding or editing a record (every cell edit is a draft, a half-filled row is a `partial` draft), notes in the
+new `ghi_chu` table, one shortcut list in `keys.js`. What was built, checked and left out is in `STATUS.md`.

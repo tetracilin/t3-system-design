@@ -1,7 +1,7 @@
 # T3 Desk
 
 Desktop app for TECOTEC Technologies' T3 design workflow. Engineers, sourcing and the PM enter
-design data through forms; the app keeps drafts locally, commits them to a Teable base on the
+design data by typing into tables (every cell edit is a local draft); the app keeps drafts locally, commits them to a Teable base on the
 office NAS with first-come ID ownership, and shows the decision tree on every screen. Outside
 systems (Hermes, gbrain MCP, Paperclip TODO AI) are reached only through plugins.
 

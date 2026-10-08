@@ -1,6 +1,6 @@
 # T3 Desk UI v2: specification (PROPOSAL, not yet approved)
 
-Status: draft written from the user's change requests of 6 to 8 Oct 2026. It does not replace `docs/REQUIREMENTS.md`.
+Status: APPROVED by Viet on 9 Oct 2026 (chose "Full UI v2 spec" when asked) and built; the section 11 proposals below stand as written. What differs in the build is listed in `STATUS.md` under Departures. It does not replace `docs/REQUIREMENTS.md`.
 Every place it departs from that document is listed in section 11 and needs Viet's approval before coding.
 Mockup: `docs/mockups/workspace-4-pane.png` (source `workspace-4-pane.html`).
 Not researched with gbrain: see section 12.

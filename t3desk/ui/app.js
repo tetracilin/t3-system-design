@@ -1,12 +1,26 @@
 'use strict';
 /* T3 Desk UI. Plain JavaScript, no framework, no network except this server's own /api.
- * All visible text comes from labels (labels_vi.yaml via /api/meta): use the T helper. */
+ * All visible text comes from labels (labels_ui_vi.yaml via /api/meta): use the T helper.
+ * Four panes (docs/UI-V2-SPEC.md): 1 menu and decision tree, 2 list or breakdown chart, 3 table (grid.js),
+ * 4 context, notes (notes.js) and the Hermes placeholder. Shortcuts are in keys.js. */
 
 const SESSION = document.querySelector('meta[name="session"]').content;
 const S = {
   meta: null, st: null, screen: 'khoi_tao', node: '', owner: '', treeName: '', treeData: null, fnode: '',
-  names: {}, panel: 'open', renderId: 0, sort: {}, lastLeaf: '', form: null, tableCache: {},
+  names: {}, panel: 'open', renderId: 0, sort: {}, lastLeaf: '', tableCache: {},
+  sel: null, tabs: {}, collapsed: {}, pendingSelect: null,
 };
+
+/* which screen shows which table (for "go to this row" from the palette, the draft list and the tree) */
+const TABLE_SCREEN = {
+  yeu_cau: 'yeu_cau', kien_truc: 'kien_truc', nut: 'cay', phan_bo: 'phan_bo', thong_so: 'nut', ung_vien: 'nut',
+  doi_chieu: 'nut', mua_hang: 'mua_hang', rfq: 'rfq', moc: 'moc', quyet_dinh: 'moc', sai_lech: 'ra_soat',
+  cai_dat: 'khoi_tao', cong_viec: 'tong_quan', ghi_chu: 'tong_quan',
+};
+const NODE_TABS = ['nut', 'phan_bo', 'thong_so', 'ung_vien', 'doi_chieu', 'mua_hang'];
+const SCREEN_TABS = { cay: NODE_TABS, phan_bo: NODE_TABS, nut: NODE_TABS, moc: ['moc', 'quyet_dinh'] };
+const DEFAULT_TAB = { cay: 'nut', phan_bo: 'phan_bo', nut: 'thong_so', moc: 'moc' };
+const NO_FOCUS_TAGS = ['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY'];
 
 /* ---------- text and helpers ---------- */
 
@@ -26,6 +40,8 @@ function fieldLabel(table, field) {
 const tableLabel = (t) => S.meta.labels.tables[t] || t;
 const specOf = (t) => S.meta.schema.tables[t];
 
+/** Build an element. Anything with a click handler that is not already a control becomes keyboard-focusable
+ *  (Tab, then Enter or Space), so every clickable thing can be used without a mouse. */
 function h(tag, props, ...kids) {
   const e = document.createElement(tag);
   for (const k in props || {}) {
@@ -37,6 +53,13 @@ function h(tag, props, ...kids) {
     else if (k === 'value') e.value = v;
     else if (v === true) e.setAttribute(k, '');
     else e.setAttribute(k, v);
+  }
+  if (props && props.onclick && !NO_FOCUS_TAGS.includes(tag.toUpperCase()) && !e.hasAttribute('tabindex')) {
+    e.setAttribute('tabindex', '0');
+    if (!e.hasAttribute('role')) e.setAttribute('role', 'button');
+    e.addEventListener('keydown', (ev) => {
+      if (ev.target === e && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); ev.stopPropagation(); e.click(); }
+    });
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid === null || kid === undefined || kid === false) continue;
@@ -83,7 +106,7 @@ function toast(text, detail, isError) {
   box.className = isError ? 'error' : '';
   box.hidden = false;
   clearTimeout(toastTimer);
-  if (!isError) toastTimer = setTimeout(() => { box.hidden = true; }, 4000);
+  if (!isError) toastTimer = setTimeout(() => { box.hidden = true; }, detail ? 7000 : 4000);
 }
 document.getElementById('toast').addEventListener('click', () => { document.getElementById('toast').hidden = true; });
 
@@ -105,39 +128,71 @@ function fmtAge(sec) {
   return T('age_hours', { n: Math.round(sec / 3600) });
 }
 
-/* ---------- shell: nav, status bar, panel ---------- */
+/* ---------- dialogs: only the few that are not "add or edit a record" ---------- */
+
+function closeModal() {
+  document.getElementById('modal-root').textContent = '';
+}
+
+function modal(title, bodyEl, buttons) {
+  const root = document.getElementById('modal-root');
+  root.textContent = '';
+  const dlg = h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true' },
+    h('header', { text: title }), h('div', { class: 'body' }, bodyEl), h('footer', null, buttons));
+  root.appendChild(h('div', { class: 'overlay' }, dlg));
+  const first = dlg.querySelector('input:not([readonly]), select, textarea, button.primary');
+  if (first) first.focus();
+  return dlg;
+}
+
+/* ---------- shell: top bar, menu, status bar ---------- */
 
 function buildNav() {
   const nav = document.getElementById('nav');
   nav.textContent = '';
   for (const key of S.meta.screens) {
-    const b = h('button', { type: 'button', 'data-screen': key, text: T('nav_' + key), onclick: () => go(key) });
-    if (key === 'commit') b.appendChild(h('span', { class: 'badge draft', id: 'nav-drafts', text: '0' }));
+    const b = h('button', { type: 'button', 'data-screen': key, onclick: () => go(key) },
+      h('span', { text: T('nav_' + key) }), h('span', { class: 'badge', 'data-count': key, hidden: true }));
     nav.appendChild(b);
   }
 }
 
 function markNav() {
+  const counts = (S.st && S.st.menu_counts) || {};
   for (const b of document.querySelectorAll('#nav button')) {
-    if (b.dataset.screen === S.screen) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    const key = b.dataset.screen;
+    if (key === S.screen) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    const badge = b.querySelector('.badge');
+    const c = counts[key];
+    if (!badge) continue;
+    badge.hidden = !c || !c.n;
+    badge.textContent = c ? String(c.n) : '';
+    badge.classList.toggle('red', !!(c && c.red));
+    badge.classList.toggle('draft', key === 'commit' && !!(c && c.n));
   }
-  const badge = document.getElementById('nav-drafts');
-  if (badge && S.st) badge.textContent = String(S.st.drafts);
 }
 
 function renderStatus() {
   const st = S.st;
+  const top = document.getElementById('top-info');
   const bar = document.getElementById('status');
+  top.textContent = '';
   bar.textContent = '';
   if (!st) return;
   const conn = st.connection;
   const roleName = st.role ? T('role_' + st.role) : T('none');
   const connText = T('conn_' + conn.state) + (conn.state === 'offline' && st.cache_age_seconds !== null
     ? ' - ' + T('cache_age', { age: fmtAge(st.cache_age_seconds) }) : '');
-  bar.appendChild(h('span', { id: 'st-project', text: T('st_project') + ': ' + (st.project || T('none')) }));
-  bar.appendChild(h('span', { id: 'st-user', text: T('st_user') + ': ' + (st.user || T('none')) + ' (' + roleName + ')' }));
-  bar.appendChild(h('span', { id: 'st-conn', class: 'state-' + conn.state, text: T('st_teable') + ': ' + connText, title: conn.message || '' }));
-  bar.appendChild(h('span', { id: 'st-drafts', text: T('st_drafts') + ': ' + st.drafts }));
+  top.appendChild(h('span', { id: 'st-project', text: T('st_project') + ': ' + (st.project || T('none')) }));
+  top.appendChild(h('span', { id: 'st-user', text: T('st_user') + ': ' + (st.user || T('none')) + ' (' + roleName + ')' }));
+  top.appendChild(h('span', { class: 'sp' }));
+  top.appendChild(h('span', { id: 'st-conn', class: 'state-' + conn.state, text: T('st_teable') + ': ' + connText, title: conn.message || '' }));
+  top.appendChild(h('span', { id: 'st-drafts', text: T('st_drafts') + ': ' + st.drafts }));
+  top.appendChild(h('button', { class: 'btn primary', type: 'button', id: 'btn-top-commit', text: T('btn_commit_top', { mod: S.meta.modifier }),
+    disabled: !st.can_commit || !st.drafts, title: st.can_commit ? '' : T('commit_disabled'), onclick: () => commitNow() }));
+  bar.appendChild(h('span', { text: T('st_legend') }));
+  bar.appendChild(h('span', { id: 'st-cache', text: T('cache_age', { age: fmtAge(st.cache_age_seconds) }) }));
+  bar.appendChild(h('span', { id: 'st-invalid', class: st.invalid_drafts ? 'err' : 'muted', text: T('st_drafts_state', { n: st.drafts, bad: st.invalid_drafts || 0 }) }));
   if (st.progress && st.progress.table) {
     bar.appendChild(h('span', { id: 'st-progress', text: T('st_loading', { table: tableLabel(st.progress.table), n: st.progress.count }) }));
   }
@@ -151,15 +206,14 @@ async function loadState() {
   return S.st;
 }
 
-function setPanel(mode) {
-  S.panel = mode;
-  document.getElementById('shell').dataset.panel = mode;
-  document.getElementById('panel-toggle').textContent = mode === 'strip' ? T('panel_open') : T('panel_collapse');
-  try { localStorage.setItem('t3_panel', mode); } catch (e) { /* storage may be blocked: the panel still works */ }
-}
+/* ---------- pane 1: the decision tree as a checklist ---------- */
 
-function widenPanel() {
-  setPanel(S.panel === 'open' ? 'wide' : (S.panel === 'wide' ? 'open' : 'open'));
+function setPanel(mode) {
+  S.panel = mode === 'strip' ? 'strip' : 'open';
+  document.getElementById('shell').dataset.panel = S.panel;
+  document.getElementById('panel-toggle').textContent = S.panel === 'strip' ? '»' : '«';
+  document.getElementById('panel-toggle').title = S.panel === 'strip' ? T('panel_open') : T('panel_collapse');
+  try { localStorage.setItem('t3_panel', S.panel); } catch (e) { /* storage may be blocked: the pane still works */ }
 }
 
 async function loadTrees() {
@@ -167,61 +221,91 @@ async function loadTrees() {
   try { data = await api('/api/trees', { query: { node: S.node } }); } catch (e) { showError(e); return; }
   S.treeData = data;
   if (!S.treeName || !data.trees[S.treeName]) S.treeName = data.first;
-  drawPanel();
+  drawTreePane();
 }
 
-function drawPanel() {
+function drawTreePane() {
   const data = S.treeData;
   if (!data) return;
   const info = document.getElementById('panel-node');
   info.textContent = '';
   info.appendChild(document.createTextNode(S.node ? T('panel_node', { node: S.node }) : T('panel_no_node')));
-  if (S.node) info.appendChild(h('button', { class: 'btn', type: 'button', text: T('panel_clear_node'), onclick: () => selectNode('') }));
+  if (S.node) info.appendChild(h('button', { class: 'btn small', type: 'button', text: T('panel_clear_node'), onclick: () => selectNode('') }));
   const tabs = document.getElementById('tree-tabs');
   tabs.textContent = '';
   for (const name of S.meta.tree_names) {
-    tabs.appendChild(h('button', {
-      type: 'button', role: 'tab', 'data-tree': name, 'aria-selected': String(name === S.treeName),
-      text: T('tree_' + name), onclick: () => { S.treeName = name; drawPanel(); },
-    }));
+    tabs.appendChild(h('button', { type: 'button', role: 'tab', 'data-tree': name, 'aria-selected': String(name === S.treeName),
+      text: T('tree_' + name), onclick: () => { S.treeName = name; drawTreePane(); } }));
   }
   const tree = data.trees[S.treeName];
   if (!tree) return;
-  drawHelp(tree, data.guide || []);
-  TreeView.draw(document.getElementById('tree-view'), tree, {
-    yesText: T('answer_yes'), noText: T('answer_no'),
-    onAction: (screen) => go(screen, { node: S.node }),
-    onLeaf: (el) => {
-      const sig = S.treeName + ':' + tree.leaf.index + ':' + tree.leaf.answer;
-      if (sig !== S.lastLeaf) { S.lastLeaf = sig; el.scrollIntoView({ block: 'center', inline: 'nearest' }); }
-    },
-  });
+  drawChecklist(tree, data.guide || []);
 }
 
-/* guidance under the tree: help of the question you are at, every step's help, and the glossary */
-function drawHelp(tree, guide) {
-  const box = document.getElementById('tree-help');
+/** "Which step are you at?": steps done are ticked, the step you are at is highlighted with its guidance. */
+function drawChecklist(tree, guide) {
+  const box = document.getElementById('tree-list');
   box.textContent = '';
-  const here = tree.leaf ? tree.questions.find((q) => q.index === tree.leaf.index) : null;
-  if (here && here.help) box.appendChild(h('div', { class: 'here-help' }, h('b', { text: T('guide_here') + ': ' }), here.help));
+  const list = h('ol', { class: 'check-list', id: 'check-list' });
+  for (const q of tree.questions) {
+    const step = (tree.steps || []).find((s) => s.index === q.index);
+    const here = !!tree.leaf && tree.leaf.index === q.index;
+    const state = !tree.highlighted ? 'ref' : (here ? 'here' : (step && !step.ends_here ? 'done' : 'todo'));
+    const li = h('li', { class: 'q ' + state, 'data-q': q.index });
+    li.appendChild(h('span', { class: 'mark', text: state === 'done' ? '✓ ' : (state === 'here' ? '▶ ' : '') }));
+    li.appendChild(document.createTextNode(q.q));
+    if (here) {
+      const leaf = tree.leaf;
+      li.appendChild(h('div', { class: 'here-do' }, h('b', { text: T('here_label') + ': ' }), leaf.do,
+        leaf.screen ? h('button', { class: 'btn small', type: 'button', text: T('btn_open'), onclick: () => go(leaf.screen, { node: S.node }) }) : null));
+      if (q.help) li.appendChild(h('div', { class: 'here-help' }, h('b', { text: T('guide_here') + ': ' }), q.help));
+    }
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  const help = document.getElementById('tree-help');
+  help.textContent = '';
   const steps = tree.questions.filter((q) => q.help);
-  if (steps.length) {
-    box.appendChild(h('details', null, h('summary', { text: T('guide_all') }),
-      steps.map((q) => h('p', null, h('b', { text: q.q + ' ' }), q.help))));
-  }
-  if (guide.length) {
-    box.appendChild(h('details', { id: 'guide-glossary' }, h('summary', { text: T('guide_glossary') }),
-      guide.map((g) => h('p', null, h('b', { text: g.term + ': ' }), g.text))));
-  }
+  if (steps.length) help.appendChild(h('details', null, h('summary', { text: T('guide_all') }), steps.map((q) => h('p', null, h('b', { text: q.q + ' ' }), q.help))));
+  if (guide.length) help.appendChild(h('details', { id: 'guide-glossary' }, h('summary', { text: T('guide_glossary') }), guide.map((g) => h('p', null, h('b', { text: g.term + ': ' }), g.text))));
+  const here = list.querySelector('.q.here');
+  const sig = S.treeName + ':' + (tree.leaf ? tree.leaf.index + ':' + tree.leaf.answer : '');
+  if (here && sig !== S.lastLeaf) { S.lastLeaf = sig; here.scrollIntoView({ block: 'nearest' }); }
+}
+
+/** F1: the same tree as a diagram, larger, in front of the working panes. */
+function widenPanel() {
+  const data = S.treeData;
+  if (!data || !data.trees[S.treeName]) return;
+  const holder = h('div', { id: 'tree-view', class: 'tree-wide' });
+  modal(T('panel_title') + ' - ' + T('tree_' + S.treeName), [holder], [h('button', { class: 'btn primary', type: 'button', text: T('btn_close'), onclick: closeModal })]);
+  TreeView.draw(holder, data.trees[S.treeName], {
+    yesText: T('answer_yes'), noText: T('answer_no'),
+    onAction: (screen) => { closeModal(); go(screen, { node: S.node }); }, onLeaf: (el) => el.scrollIntoView({ block: 'center' }),
+  });
 }
 
 async function selectNode(code) {
   S.node = code;
   await loadTrees();
-  if (S.screen === 'nut') render();
+  if (S.screen === 'nut' || S.screen === 'cay' || S.screen === 'phan_bo') render();
 }
 
-/* ---------- navigation ---------- */
+/* ---------- navigation and the four-pane workspace ---------- */
+
+const Workspace = {
+  current: null, grid: null,
+  /** Ctrl+PageUp / PageDown: the next or previous tab of pane 3. */
+  tab(dir) {
+    const ws = this.current;
+    if (!ws || !ws.tabs) return;
+    const items = ws.tabs.items;
+    const at = items.findIndex((t) => t.key === ws.tabs.active);
+    const next = items[(at + dir + items.length) % items.length];
+    if (next) ws.tabs.pick(next.key);
+  },
+};
+const Chart = { current: null };
 
 function go(screen, opts) {
   const o = opts || {};
@@ -229,28 +313,72 @@ function go(screen, opts) {
   S.fnode = o.node || '';
   if (o.node) S.node = o.node;
   S.owner = o.owner || '';
+  if (o.tab) S.tabs[screen] = o.tab;
+  S.sel = null;
   render();
   loadTrees();
 }
 
-let rendering = 0;
+/** Open the screen that shows a row and put the cursor on it (palette, draft list, notes). */
+async function jumpTo(table, key) {
+  const data = await getRows(table);
+  const row = data.rows.find((r) => r.key === key);
+  if (table === 'ghi_chu' && row) return jumpTo(row.fields.bang, row.fields.ma_ban_ghi); // a note: go to what it is about
+  S.pendingSelect = { table, key };
+  const screen = TABLE_SCREEN[table] || 'tong_quan';
+  go(screen, { node: row ? row.node : '', tab: SCREEN_TABS[screen] && SCREEN_TABS[screen].includes(table) ? table : undefined });
+}
+
+function setPane(idTitle, idBody, title, body) {
+  document.getElementById(idTitle).textContent = title || '';
+  const holder = document.getElementById(idBody);
+  holder.textContent = '';
+  if (body) holder.appendChild(body);
+}
+
 async function render() {
   const id = ++S.renderId;
-  rendering = id;
   markNav();
-  const main = document.getElementById('main');
-  const fn = SCREENS[S.screen] || SCREENS.khoi_tao;
-  const box = h('div');
+  const before = Workspace.grid && S.screen === S.lastScreen ? Workspace.grid.cursorState() : null;
+  const scroll3 = document.getElementById('p3-body').scrollTop;
+  const ws = { p2: h('div', { class: 'p2-inner' }), p3: h('div', { class: 'p3-inner' }), t2: '', t3: '', tabs: null, bar: null, grid: null };
   try {
-    await fn(box);
+    await (SCREENS[S.screen] || SCREENS.khoi_tao)(ws);
   } catch (e) {
-    box.textContent = '';
-    box.appendChild(h('p', { class: 'err', text: T('err_screen') }));
+    ws.p3 = h('p', { class: 'err pad', text: T('err_screen') });
     showError(e);
   }
   if (id !== S.renderId) return;
-  main.textContent = '';
-  main.appendChild(box);
+  setPane('p2-title', 'p2-body', ws.t2, ws.p2);
+  setPane('p3-title', 'p3-body', ws.t3, ws.p3);
+  const tabs = document.getElementById('p3-tabs');
+  tabs.textContent = '';
+  if (ws.tabs) {
+    for (const t of ws.tabs.items) {
+      tabs.appendChild(h('button', { type: 'button', role: 'tab', 'data-tab': t.key, 'aria-selected': String(t.key === ws.tabs.active),
+        text: tableLabel(t.key) + (t.count !== undefined ? ' (' + t.count + ')' : ''), onclick: () => ws.tabs.pick(t.key) }));
+    }
+  }
+  tabs.hidden = !ws.tabs;
+  const bar = document.getElementById('p3-bar');
+  bar.textContent = '';
+  if (ws.bar) bar.appendChild(ws.bar);
+  bar.hidden = !ws.bar;
+  Workspace.current = ws;
+  Workspace.grid = ws.grid;
+  if (ws.grid) Grid.current = ws.grid;
+  if (before && ws.grid && !S.pendingSelect) ws.grid.restoreCursor(before);
+  const sameScreen = S.lastScreen === S.screen;
+  document.getElementById('p3-body').scrollTop = sameScreen ? scroll3 : 0; // a new screen starts at the top
+  if (!sameScreen) document.getElementById('p2-body').scrollTop = 0;
+  S.lastScreen = S.screen;
+  drawContext();
+  if (S.pendingSelect && ws.grid && ws.grid.table === S.pendingSelect.table) {
+    ws.grid.focusKey(S.pendingSelect.key);
+    ws.grid.focus();
+  }
+  S.pendingSelect = null;
+  if (S.afterRender) { const f = S.afterRender; S.afterRender = null; f(); }
 }
 
 async function refreshAll() {
@@ -259,7 +387,86 @@ async function refreshAll() {
   await loadTrees();
 }
 
-/* ---------- generic table ---------- */
+/** The user reached for a different row: pane 4 follows (a short pause keeps arrow-key runs cheap). */
+let selTimer = null;
+function select(table, key) {
+  const same = (S.sel && S.sel.table === table && S.sel.key === key) || (!S.sel && !key);
+  if (same) return;
+  S.sel = key ? { table, key } : null;
+  for (const el of document.querySelectorAll('#p2-body [data-key]')) el.classList.toggle('sel', !!key && el.dataset.key === key);
+  clearTimeout(selTimer);
+  selTimer = setTimeout(drawContext, 90);
+}
+
+/* ---------- pane 4: context, notes, Hermes ---------- */
+
+function drawHermes(body, ctxKey) {
+  const box = h('div', { class: 'hermes', id: 'hermes-box' });
+  body.appendChild(box);
+  api('/api/assistant', { query: { context: ctxKey || '' } }).then((data) => {
+    box.appendChild(h('h3', { class: 'pane-sub' }, T('hermes_title'), ' ', h('span', { class: 'badge', id: 'hermes-state', text: data.enabled ? T('hermes_on') : T('hermes_off') })));
+    box.appendChild(h('p', { class: 'muted', text: T('hermes_note') }));
+    const actions = data.enabled ? data.actions : [{ id: 'find', label: T('hermes_find') }, { id: 'suggest', label: T('hermes_suggest') }, { id: 'context', label: T('hermes_context') }];
+    box.appendChild(h('div', { class: 'hermes-actions' }, actions.map((a) => h('button', { class: 'btn small', type: 'button', 'data-hermes': a.id,
+      disabled: !data.enabled, text: a.label }))));
+    box.appendChild(h('input', { id: 'hermes-ask', type: 'text', disabled: !data.enabled, placeholder: T('hermes_ask_off'), 'aria-label': T('hermes_ask_off') }));
+  }).catch(() => { /* the placeholder is optional: no endpoint, no panel */ });
+}
+
+function ctxBlock(table, b) {
+  const title = b.title_key ? h('h4', { text: T(b.title_key) }) : null;
+  if (b.type === 'kv') {
+    return h('div', { class: 'ctx ctx-kv' }, title, h('dl', null, b.items.map((it) => [
+      h('dt', { text: it.field ? fieldLabel(table, it.field) : T(it.label_key) }), h('dd', { text: String(it.value) })])));
+  }
+  if (b.type === 'chips' || b.type === 'warnings') {
+    const items = b.type === 'warnings' ? b.items.map((t) => ({ text: t, bad: true })) : b.items;
+    return h('div', { class: 'ctx' }, title, items.length
+      ? h('div', null, items.map((c) => h('span', { class: 'chip' + (c.bad ? ' bad' : ''), text: c.text })))
+      : h('span', { class: 'muted', text: T('ov_none') }));
+  }
+  if (b.type === 'text') return h('div', { class: 'ctx' }, title, h('p', { text: b.text || T('ov_none') }));
+  if (b.type === 'help') {
+    const known = S.meta.labels.ui[b.label_key] !== undefined && S.meta.labels.ui[b.label_key] !== '';
+    return h('div', { class: 'help' }, h('b', { text: T('help_title') + ': ' }), T(known ? b.label_key : 'help_generic'));
+  }
+  return null;
+}
+
+async function drawContext() {
+  const body = document.getElementById('p4-body');
+  const sel = S.sel;
+  const title = document.getElementById('p4-title');
+  if (!sel) {
+    title.textContent = T('p4_title');
+    body.textContent = '';
+    body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') }));
+    drawHermes(body, '');
+    return;
+  }
+  let ctx;
+  try {
+    ctx = await api('/api/context', { query: { table: sel.table, key: sel.key } });
+  } catch (e) {
+    if (S.sel === sel) { body.textContent = ''; body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') })); }
+    return;
+  }
+  if (S.sel !== sel) return; // the user moved on while this was loading
+  title.textContent = T('p4_row', { title: ctx.title });
+  const scroll = body.scrollTop;
+  body.textContent = '';
+  const info = h('div', { class: 'ctx-wrap', id: 'ctx-blocks' }, ctx.blocks.map((b) => ctxBlock(sel.table, b)));
+  body.appendChild(info);
+  const notes = h('div', { class: 'notes', id: 'notes-box' });
+  body.appendChild(notes);
+  await guard(() => drawNotes(notes, sel.table, sel.key));
+  drawHermes(body, sel.table + '.row');
+  body.scrollTop = scroll;
+}
+
+window.onNotesChanged = () => { if (Workspace.grid) Workspace.grid.reload(); };
+
+/* ---------- shared helpers ---------- */
 
 async function getRows(table, filter) {
   const q = { table };
@@ -268,25 +475,16 @@ async function getRows(table, filter) {
   return api('/api/rows', { query: q });
 }
 
-function visibleColumns(table, rows) {
-  const spec = specOf(table);
-  const names = Object.keys(spec.fields);
-  const idName = spec.id_field;
-  const cols = [idName];
-  for (const n of names) {
-    if (n === idName || spec.fields[n].type === 'longtext') continue;
-    if (cols.length < S.meta.list_columns) cols.push(n);
+async function idChoices(ref) {
+  if (!S.tableCache[ref]) {
+    const data = await getRows(ref);
+    S.tableCache[ref] = data.rows.map((r) => r.key);
   }
-  return cols;
+  return S.tableCache[ref];
 }
 
 function settingLabel(key) {
   return ((S.meta.labels.settings_keys || {})[key]) || '';
-}
-
-function isRateKey(table, key) {
-  const cfg = S.meta.schema.exchange_rates || {};
-  return table === cfg.table && !!cfg.key_prefix && String(key || '').startsWith(cfg.key_prefix);
 }
 
 /* "N1 - Propulsion": a code is never shown alone when its name is known */
@@ -295,21 +493,10 @@ function withName(ref, code) {
   return nm ? code + ' - ' + nm : code;
 }
 
-function cellText(table, name, value) {
-  if (value === null || value === undefined) return '';
-  const fs = (specOf(table).fields || {})[name];
-  if (fs && fs.ref && value !== '') {
-    const sep = fs.multi || null;
-    return (sep ? String(value).split(sep) : [String(value)]).map((c) => withName(fs.ref, c.trim())).join('; ');
-  }
-  if (table === 'cai_dat' && name === 'khoa' && settingLabel(value)) return settingLabel(value) + ' (' + value + ')';
-  return String(value);
-}
-
 function sortRows(table, rows) {
   const s = S.sort[table];
   if (!s) return rows;
-  const get = (r) => (s.extra ? r.extras[s.col] : r.fields[s.col]);
+  const get = (r) => (s.extra ? (r.extras || {})[s.col] : r.fields[s.col]);
   const out = rows.slice();
   out.sort((a, b) => {
     const x = get(a), y = get(b);
@@ -321,73 +508,10 @@ function sortRows(table, rows) {
   return out;
 }
 
-async function openRow(table, key) {
-  const data = await getRows(table);
-  const row = data.rows.find((r) => r.key === key);
-  if (row) openForm({ table, row });
-}
-
-function tableView(table, data, opts) {
-  const o = opts || {};
-  const spec = specOf(table);
-  const cols = visibleColumns(table, data.rows);
-  const extraNames = [...new Set(data.rows.flatMap((r) => Object.keys(r.extras)))];
-  const wrap = h('div', { class: 'tablewrap' });
-  const t = h('table', { class: 'grid', 'data-table': table });
-  const head = h('tr');
-  head.appendChild(h('th', { class: 'nosort', text: '' }));
-  const mkTh = (col, extra, label) => h('th', {
-    text: label + (S.sort[table] && S.sort[table].col === col && !!S.sort[table].extra === extra ? (S.sort[table].dir > 0 ? ' ▲' : ' ▼') : ''),
-    onclick: () => {
-      const cur = S.sort[table];
-      S.sort[table] = { col, extra, dir: cur && cur.col === col ? -cur.dir : 1 };
-      render();
-    },
-  });
-  cols.forEach((c) => head.appendChild(mkTh(c, false, fieldLabel(table, c))));
-  extraNames.forEach((c) => head.appendChild(mkTh(c, true, T('extra_' + c))));
-  t.appendChild(h('thead', null, head));
-  const body = h('tbody');
-  for (const row of sortRows(table, data.rows)) {
-    const tr = h('tr', { class: row.draft ? 'is-draft' : '', 'data-key': row.key, onclick: () => (o.onRow ? o.onRow(row) : openForm({ table, row })) });
-    const first = h('td');
-    if (row.draft) first.appendChild(h('span', { class: 'badge draft', text: T('draft_mark') }));
-    if (row.warnings.length) first.appendChild(h('span', { class: 'badge warn', title: row.warnings.join('\n'), text: '! ' + row.warnings.length }));
-    tr.appendChild(first);
-    cols.forEach((c) => {
-      const v = row.fields[c];
-      const td = h('td', { class: typeof v === 'number' ? 'num' : '' });
-      if (o.link && o.link === c && /^https?:\/\//.test(String(v || ''))) {
-        td.appendChild(h('a', { href: v, target: '_blank', rel: 'noopener', text: String(v), onclick: (ev) => ev.stopPropagation() }));
-      } else td.textContent = cellText(table, c, v);
-      tr.appendChild(td);
-    });
-    extraNames.forEach((c) => tr.appendChild(h('td', { text: num(row.extras[c]) })));
-    body.appendChild(tr);
-  }
-  t.appendChild(body);
-  wrap.appendChild(t);
-  if (!data.rows.length) wrap.appendChild(h('p', { class: 'muted', text: T('empty') }));
-  return wrap;
-}
-
-function filterBar(table, data, onChange) {
-  const nodeSel = h('select', { id: 'f-node', 'aria-label': T('filter_node') },
-    h('option', { value: '', text: T('filter_node') + ': ' + T('all') }),
-    data.nodes.map((n) => h('option', { value: n, text: withName('nut', n), selected: n === S.fnode })));
-  const ownerSel = h('select', { id: 'f-owner', 'aria-label': T('filter_owner') },
-    h('option', { value: '', text: T('filter_owner') + ': ' + T('all') }),
-    data.owners.map((n) => h('option', { value: n, text: n, selected: n === S.owner })));
-  nodeSel.addEventListener('change', () => { S.fnode = nodeSel.value; onChange(); });
-  ownerSel.addEventListener('change', () => { S.owner = ownerSel.value; onChange(); });
-  return [nodeSel, ownerSel];
-}
-
 async function exportCsv(table) {
   await guard(async () => {
     const q = { table };
-    if (S.fnode) q.node = S.fnode;
-    if (S.owner) q.owner = S.owner;
+    if (S.node && NODE_TABS.includes(table)) q.node = S.node;
     const res = await api('/api/csv', { query: q });
     const blob = new Blob([res.text], { type: 'text/csv;charset=utf-8' });
     const a = h('a', { href: URL.createObjectURL(blob), download: res.filename });
@@ -398,191 +522,223 @@ async function exportCsv(table) {
   });
 }
 
-async function tableScreen(box, table, opts) {
-  const o = opts || {};
-  const data = await getRows(table, { node: S.fnode, owner: S.owner });
-  const bar = h('div', { class: 'toolbar' });
-  bar.appendChild(h('button', { class: 'btn primary', type: 'button', id: 'btn-new-' + table, text: T('btn_new'),
-    onclick: () => openForm({ table, prefill: o.prefill || {} }) }));
-  filterBar(table, data, () => render()).forEach((e) => bar.appendChild(e));
-  bar.appendChild(h('button', { class: 'btn', type: 'button', text: T('btn_csv'), onclick: () => exportCsv(table) }));
-  bar.appendChild(h('span', { class: 'muted grow', text: T('cache_age', { age: fmtAge(data.age) }) }));
-  box.appendChild(bar);
-  box.appendChild(tableView(table, data, o));
-  return data;
-}
-
-/* ---------- forms generated from schema.yaml ---------- */
-
-async function idChoices(ref) {
-  if (!S.tableCache[ref]) {
-    const data = await getRows(ref);
-    S.tableCache[ref] = data.rows.map((r) => r.key);
-  }
-  return S.tableCache[ref];
-}
-
-function closeModal() {
-  document.getElementById('modal-root').textContent = '';
-  S.form = null;
-}
-
-function modal(title, bodyEl, buttons) {
-  const root = document.getElementById('modal-root');
-  root.textContent = '';
-  const dlg = h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true' },
-    h('header', { text: title }), h('div', { class: 'body' }, bodyEl), h('footer', null, buttons));
-  root.appendChild(h('div', { class: 'overlay' }, dlg));
-  const first = dlg.querySelector('input:not([readonly]), select, textarea');
-  if (first) first.focus();
-  return dlg;
-}
-
-function widget(table, name, spec, value, refIds, readonly) {
-  let el;
-  const id = 'fld-' + name;
-  if (spec.type === 'choice') {
-    el = h('select', { id, name }, h('option', { value: '', text: '' }),
-      spec.choices.map((c) => h('option', { value: c, text: c, selected: c === value })));
-  } else if (spec.type === 'longtext') {
-    el = h('textarea', { id, name, rows: '2' });
-    el.value = value === undefined || value === null ? '' : value;
-  } else if (spec.type === 'number') {
-    el = h('input', { id, name, type: 'number', step: 'any' });
-    el.value = value === undefined || value === null ? '' : value;
-  } else if (spec.type === 'date') {
-    el = h('input', { id, name, type: 'date' });
-    el.value = value ? String(value).slice(0, 10) : '';
-  } else {
-    el = h('input', { id, name, type: 'text' });
-    el.value = value === undefined || value === null ? '' : value;
-    if (spec.ref && refIds) {
-      const dl = h('datalist', { id: 'dl-' + name }, refIds.map((r) => h('option', { value: r, label: withName(spec.ref, r), text: withName(spec.ref, r) })));
-      el.setAttribute('list', 'dl-' + name);
-      el._datalist = dl;
-    }
-  }
-  if (readonly) { el.setAttribute('readonly', ''); if (el.tagName === 'SELECT') el.setAttribute('disabled', ''); }
-  return el;
-}
-
-function readWidget(spec, el) {
-  const raw = el.value;
-  if (raw === '') return '';
-  if (spec.type === 'number') return Number(raw);
-  return raw;
-}
-
-async function openForm(opts) {
-  const table = opts.table;
+/** A short title for a row in the pane 2 list: "code - name" whenever a name is known. */
+function rowTitle(table, row) {
+  const known = ((S.names || {})[table] || {})[row.key];
+  if (known) return row.key + ' - ' + known;
   const spec = specOf(table);
-  const idName = spec.id_field;
-  const row = opts.row || null;
-  const isCreateDraft = row && row.draft_op === 'create';
-  const isUpdate = !!row && !isCreateDraft;
-  const values = Object.assign({}, opts.prefill || {}, row ? row.fields : {});
-  const refIds = {};
-  for (const n in spec.fields) {
-    const ref = spec.fields[n].ref;
-    if (ref && !refIds[ref]) refIds[ref] = await idChoices(ref).catch(() => []);
+  for (const [name, fs] of Object.entries(spec.fields)) {
+    if (name === spec.id_field || fs.type === 'choice' || fs.type === 'number' || fs.type === 'date') continue;
+    const v = row.fields[name];
+    if (v) return row.key + ' - ' + String(v).slice(0, 40);
   }
-  if (!row && spec.id.kind !== 'composite' && spec.id.kind !== 'key' && !values[idName]) {
-    try {
-      const q = { table };
-      if (values.ma_cha) q.parent = values.ma_cha;
-      const p = await api('/api/next_id', { query: q });
-      if (p.id) values[idName] = p.id;
-    } catch (e) { /* no proposal for this kind or parent: the user types the ID */ }
-  }
-  const grid = h('div', { class: 'form-grid' });
-  const inputs = {};
-  for (const name in spec.fields) {
-    const fs = spec.fields[name];
-    if (spec.id.kind === 'composite' && name === idName) continue; // built by the app from other fields
-    const readonly = name === idName && isUpdate;
-    const el = widget(table, name, fs, values[name], refIds[fs.ref], readonly);
-    if (opts.pickers && opts.pickers[name] && !readonly) {  // a list of known names; typing a new one is still allowed
-      const dl = h('datalist', { id: 'dl-pick-' + name }, opts.pickers[name].map((v) => h('option', { value: v })));
-      el.setAttribute('list', 'dl-pick-' + name);
-      el._datalist = dl;
+  return row.key;
+}
+
+/** Pane 2 as a list with a filter box. `onPick(key)` puts the cursor of the table on that row. */
+function rowList(table, rows, onPick, o) {
+  const opts = o || {};
+  const input = h('input', { type: 'search', class: 'list-filter', id: 'p2-filter', 'aria-label': T('filter_text'), placeholder: T('filter_text') });
+  const ul = h('ul', { class: 'plain list-pane', id: 'row-list' });
+  const draw = (all) => {
+    const q = input.value.trim().toLowerCase();
+    ul.textContent = '';
+    for (const row of all) {
+      const title = rowTitle(table, row);
+      if (q && !title.toLowerCase().includes(q)) continue;
+      const dot = row.warnings && row.warnings.length ? 'r' : (row.draft ? 'y' : '');
+      ul.appendChild(h('li', { class: 'item' + (S.sel && S.sel.key === row.key ? ' sel' : ''), 'data-key': row.key, onclick: () => onPick(row.key) },
+        h('span', { class: 'dot ' + dot }), h('span', { class: 'nm', text: title }),
+        row.draft ? h('span', { class: 'mark', text: '✎' }) : null,
+        row.warnings && row.warnings.length ? h('span', { class: 'badge warn', title: row.warnings.join('\n'), text: '! ' + row.warnings.length }) : null,
+        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: row.key }), text: '✉ ' + row.notes }) : null,
+        opts.side ? h('span', { class: 'nx', text: opts.side(row) }) : null));
     }
-    inputs[name] = el;
-    let labelText = fieldLabel(table, name);
-    if (table === 'cai_dat' && name === 'gia_tri' && settingLabel(values.khoa)) labelText = settingLabel(values.khoa);
-    if (isRateKey(table, values.khoa) && name === 'gia_tri') { el.setAttribute('inputmode', 'decimal'); el.setAttribute('placeholder', '27000'); }
-    const label = h('label', { for: 'fld-' + name, text: labelText + (fs.required ? ' *' : '') });
-    const cell = h('div', { class: 'f' + (fs.type === 'longtext' ? ' wide' : ''), 'data-field': name }, label, el, el._datalist || null);
-    if (name === idName && spec.id.example) cell.appendChild(h('span', { class: 'muted', text: T('id_example', { ex: spec.id.example }) }));
-    if (fs.multi) cell.appendChild(h('span', { class: 'muted', text: T('multi_hint', { sep: fs.multi }) }));
-    if (fs.ref) {  // show the name of the chosen code(s) under the field, updated as the user types
-      const hint = h('span', { class: 'muted ref-name' });
-      const show = () => { hint.textContent = el.value ? cellText(table, name, el.value) : ''; };
-      el.addEventListener('input', show);
-      el.addEventListener('change', show);
-      show();
-      cell.appendChild(hint);
-    }
-    grid.appendChild(cell);
-  }
-  const msg = h('div', { class: 'err', id: 'form-error' });
-  const save = async () => {
-    msg.textContent = '';
-    for (const c of grid.querySelectorAll('.f')) { c.classList.remove('bad'); const w = c.querySelector('.why'); if (w) w.remove(); }
-    const fields = {};
-    for (const name in inputs) fields[name] = readWidget(spec.fields[name], inputs[name]);
-    if (spec.id.kind === 'composite') {
-      fields[idName] = spec.id.parts.map((p) => fields[p] || '').join(spec.id.separator);
-    }
-    let body;
-    if (isUpdate) {
-      const base = row.base || row.fields;
-      const changed = {};
-      for (const k in fields) {
-        if (k === idName) continue;
-        const a = fields[k] === '' ? null : fields[k];
-        const b = base[k] === undefined ? null : base[k];
-        if (String(a) !== String(b)) changed[k] = fields[k];
-      }
-      if (!Object.keys(changed).length) { msg.textContent = T('nothing_changed'); return; }
-      body = { table, op: 'update', key: row.key, record_id: row.record_id, base_modified: row.modified, base_fields: base, fields: changed, draft_id: row.draft || undefined };
-    } else {
-      body = { table, op: 'create', fields, draft_id: isCreateDraft ? row.draft : undefined };
-    }
-    let saved;
-    try {
-      saved = await api('/api/draft', { body });
-    } catch (e) {
-      const err = e instanceof ApiFail ? e.err : {};
-      if (err.code === 'invalid' && err.issues) {
-        msg.textContent = T('err_invalid');
-        for (const issue of err.issues) {
-          const cell = grid.querySelector('[data-field="' + issue.field + '"]');
-          if (cell) { cell.classList.add('bad'); cell.appendChild(h('span', { class: 'why', text: T('v_' + issue.code) + ' - ' + issue.message })); }
-        }
-      } else showError(e);
-      return;
-    }
-    delete S.tableCache[table];
-    closeModal();
-    const notes = [...new Set((saved.warnings || []).map((w) => w.text))];
-    toast(T('draft_saved'), notes.length ? T('draft_warnings') + ': ' + notes.join(' / ') : '');
-    await refreshAll();
+    if (!ul.firstChild) ul.appendChild(h('li', { class: 'muted pad', text: T('empty') }));
   };
-  S.form = { save };
-  const title = (row ? (isCreateDraft ? T('form_edit_draft') : T('form_edit')) : T('form_new')) + ': ' + tableLabel(table);
-  modal(title, [grid, msg], [
-    h('button', { class: 'btn', type: 'button', id: 'form-cancel', text: T('btn_cancel'), onclick: closeModal }),
-    h('button', { class: 'btn primary', type: 'button', id: 'form-save', text: T('btn_save_draft'), onclick: save }),
-  ]);
+  input.addEventListener('input', () => draw(rowList.last || rows));
+  draw(rows);
+  const el = h('div', { class: 'list-wrap' }, input, ul);
+  return { el, update: (all) => { rowList.last = all; draw(all); } };
+}
+
+/** One grid in pane 3 with its toolbar. Returns the grid; the workspace holds on to it for the keyboard. */
+async function gridFor(ws, table, o) {
+  const opts = o || {};
+  const filter = { node: opts.node || '', owner: opts.owner || '' };
+  const fetch = () => getRows(table, filter);
+  const data = await fetch();
+  const grid = buildGrid(table, data, {
+    fetch, prefill: opts.prefill, actions: opts.actions, noNew: opts.noNew,
+    onSelect: (row) => select(row ? table : null, row ? row.key : null),
+    onChange: () => { if (opts.onChange) opts.onChange(grid); },
+  });
+  ws.grid = grid;
+  const bar = h('div', { class: 'toolbar' },
+    h('button', { class: 'btn primary', type: 'button', id: 'btn-new-' + table, text: T('btn_new_row'), onclick: () => grid.newRow() }),
+    h('span', { class: 'muted grow', text: T('grid_hint', { mod: S.meta.modifier }) }),
+    opts.barExtra || null,
+    h('button', { class: 'btn small', type: 'button', text: T('btn_csv'), onclick: () => exportCsv(table) }));
+  grid.bar = bar;
+  if (!opts.inline) ws.bar = bar;
+  return grid;
+}
+
+/** Pane 2 list and pane 3 grid of one table (requirements, architectures, RFQ, milestones...). */
+async function listAndGrid(ws, table, o) {
+  const opts = o || {};
+  ws.t2 = T('p2_list', { table: tableLabel(table) });
+  ws.t3 = tableLabel(table);
+  const holder = {};
+  const grid = await gridFor(ws, table, Object.assign({}, opts, {
+    onChange: (g) => { holder.list.update(g.rows); },
+  }));
+  holder.list = rowList(table, grid.rows, (key) => { grid.focusKey(key); grid.focus(); }, { side: opts.side });
+  ws.p2.appendChild(holder.list.el);
+  ws.p3.appendChild(grid.el);
+  const origReload = grid.reload;
+  grid.reload = async () => { await origReload(); holder.list.update(grid.rows); };
+  return grid;
+}
+
+/* ---------- pane 2 for the breakdown screens: the system chart ---------- */
+
+function chartDot(n) {
+  return h('span', { class: 'dot ' + (n.dot || ''), title: n.next || '' });
+}
+
+async function chartPane(ws) {
+  const data = await api('/api/tree_nodes');
+  ws.t2 = T('p2_chart');
+  const gates = h('div', { class: 'toolbar' });
+  for (const key of Object.keys(data.gates)) {
+    const cb = h('input', { type: 'checkbox', id: 'gate-' + key, 'data-gate': key, disabled: !data.can_gate, checked: data.gates[key] || false,
+      title: data.can_gate ? '' : T('role_needed') });
+    cb.addEventListener('change', () => setGate(key, cb.checked, cb));
+    gates.appendChild(h('label', { class: 'switch' }, cb, T('gate_' + key)));
+  }
+  gates.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
+  ws.p2.appendChild(gates);
+  const wrap = h('div', { id: 'chart', role: 'tree', 'aria-label': T('p2_chart') });
+  ws.p2.appendChild(wrap);
+  const kids = new Map();
+  data.nodes.forEach((n, i) => { kids.set(n.code, i + 1 < data.nodes.length && data.nodes[i + 1].depth > n.depth); });
+
+  const draw = () => {
+    wrap.textContent = '';
+    let hideBelow = null;
+    let first = true;
+    for (const n of data.nodes) {
+      if (hideBelow !== null) { if (n.depth > hideBelow) continue; hideBelow = null; }
+      const collapsed = !!S.collapsed[n.code];
+      if (collapsed && kids.get(n.code)) hideBelow = n.depth;
+      const sel = n.code === S.node;
+      const row = h('div', { class: 'row' + (sel ? ' sel' : '') + (n.active === false ? ' inactive' : '') + (n.draft ? ' is-draft' : ''), role: 'treeitem',
+        'data-code': n.code, 'data-level': String(n.level), 'data-depth': String(n.depth), 'aria-selected': String(sel),
+        'aria-expanded': kids.get(n.code) ? String(!collapsed) : undefined, tabindex: sel || (first && !S.node) ? '0' : '-1',
+        'data-focus-first': sel || (first && !S.node),
+        style: 'padding-left:' + (8 + n.depth * 18) + 'px', onclick: () => selectNode(n.code) },
+        h('span', { class: 'tw', text: kids.get(n.code) ? (collapsed ? '▸' : '▾') : '' }),
+        n.leaf ? chartDot(n) : h('span', { class: 'dot' }),
+        h('span', { class: 'code', text: n.code }), h('span', { class: 'nm', text: n.name }),
+        n.owner ? h('span', { class: 'own', text: n.owner }) : null,
+        n.draft ? h('span', { class: 'mark', text: '✎' }) : null,
+        n.warnings.length ? h('span', { class: 'badge warn', title: n.warnings.join('\n'), text: '! ' + n.warnings.length }) : null,
+        h('span', { class: 'nx', text: n.next + (n.cost ? ' · ' + n.cost : ''), title: T('chart_cost', { n: n.cost }) }));
+      first = false;
+      wrap.appendChild(row);
+    }
+    if (!data.nodes.length) wrap.appendChild(h('p', { class: 'muted pad', text: T('empty') }));
+  };
+  draw();
+  wrap.appendChild(h('div', { class: 'legend', text: T('chart_legend') }));
+
+  const visible = () => [...wrap.querySelectorAll('.row[data-code]')];
+  const focusRow = (el) => {
+    if (!el) return;
+    for (const r of wrap.querySelectorAll('.row')) r.setAttribute('tabindex', '-1');
+    el.setAttribute('tabindex', '0');
+    el.focus();
+  };
+  const current = () => (document.activeElement && document.activeElement.closest ? document.activeElement.closest('.row[data-code]') : null);
+  Chart.current = {
+    arrow(key) {
+      const rows = visible();
+      const cur = current() || rows[0];
+      const at = rows.indexOf(cur);
+      if (key === 'ArrowDown') focusRow(rows[Math.min(at + 1, rows.length - 1)]);
+      else if (key === 'ArrowUp') focusRow(rows[Math.max(at - 1, 0)]);
+      else if (key === 'ArrowRight') {
+        const code = cur.dataset.code;
+        if (kids.get(code) && S.collapsed[code]) { S.collapsed[code] = false; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
+        else if (rows[at + 1] && Number(rows[at + 1].dataset.depth) > Number(cur.dataset.depth)) focusRow(rows[at + 1]);
+      } else if (key === 'ArrowLeft') {
+        const code = cur.dataset.code;
+        if (kids.get(code) && !S.collapsed[code]) { S.collapsed[code] = true; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
+        else { for (let i = at - 1; i >= 0; i -= 1) if (Number(rows[i].dataset.depth) < Number(cur.dataset.depth)) { focusRow(rows[i]); break; } }
+      }
+    },
+    choose() {
+      const cur = current();
+      if (!cur) return;
+      S.afterRender = () => focusPane(3);
+      selectNode(cur.dataset.code);
+    },
+    addChild() {
+      const cur = current();
+      const code = cur ? cur.dataset.code : S.node;
+      const level = cur ? Number(cur.dataset.level) : (data.nodes.find((n) => n.code === S.node) || { level: 0 }).level;
+      if (!code) { toast(T('chart_pick_first')); return; }
+      if (level >= 2) { toast(T('chart_max_level')); return; }
+      S.node = code;
+      S.tabs[S.screen] = 'nut';
+      S.afterRender = () => { if (Workspace.grid) Workspace.grid.newRow(); };
+      render();
+      loadTrees();
+    },
+  };
+  ws.chart = Chart.current;
+}
+
+async function setGate(key, value, checkbox) {
+  try {
+    const rows = await getRows('cai_dat');
+    const existing = rows.rows.find((r) => r.key === key);
+    const text = value ? S.meta.values.yes : S.meta.values.no;
+    const body = existing
+      ? { table: 'cai_dat', op: 'update', key, record_id: existing.record_id, base_modified: existing.modified, base_fields: existing.base,
+          draft_id: existing.draft || undefined, fields: { gia_tri: text } }
+      : { table: 'cai_dat', op: 'create', fields: { khoa: key, gia_tri: text } };
+    await api('/api/draft', { body });
+    toast(T('draft_saved'));
+    await refreshAll();
+  } catch (e) {
+    checkbox.checked = !value;
+    showError(e);
+  }
 }
 
 /* ---------- screens ---------- */
 
 const SCREENS = {};
 
-SCREENS.khoi_tao = async (box) => {
+/** A row the user starts from a list or a matrix: saved at once as a draft with what we know, then opened in the grid. */
+async function startRow(table, fields) {
+  const idName = specOf(table).id_field;
+  const f = Object.assign({}, fields);
+  if (!f[idName]) f[idName] = (await api('/api/next_id', { query: { table } })).id;
+  await api('/api/draft', { body: { table, op: 'create', fields: f, partial: true } });
+  delete S.tableCache[table];
+  S.pendingSelect = { table, key: f[idName] };
+  await refreshAll();
+}
+
+SCREENS.khoi_tao = async (ws) => {
   const st = S.st || (await loadState());
-  box.appendChild(h('h1', { text: T('nav_khoi_tao') }));
+  const box = ws.p3;
+  ws.t2 = T('p2_settings');
+  ws.t3 = T('nav_khoi_tao');
+  ws.p2.appendChild(h('p', { class: 'muted pad', text: T('settings_hint') }));
   const f = {};
   const row = (key, el) => { f[key] = el; return [h('label', { for: 's-' + key, text: T('set_' + key) }), el]; };
   const url = h('input', { id: 's-teable_url', type: 'text', value: st.teable_url || '' });
@@ -590,9 +746,9 @@ SCREENS.khoi_tao = async (box) => {
   const user = h('input', { id: 's-user', type: 'text', value: st.user || '' });
   const role = h('select', { id: 's-role' }, h('option', { value: '', text: '' }),
     S.meta.roles.map((r) => h('option', { value: r, text: T('role_' + r), selected: r === st.role })));
-  box.appendChild(h('div', { class: 'kv' }, row('teable_url', url), row('token', token), row('user', user), row('role', role)));
+  box.appendChild(h('div', { class: 'kv pad' }, row('teable_url', url), row('token', token), row('user', user), row('role', role)));
   const collect = () => ({ teable_url: url.value.trim(), token: token.value, user: user.value.trim(), role: role.value });
-  box.appendChild(h('div', { class: 'toolbar' },
+  box.appendChild(h('div', { class: 'toolbar pad' },
     h('button', { class: 'btn primary', type: 'button', id: 'btn-save-settings', text: T('btn_save_settings'), onclick: () => guard(async () => {
       S.st = await api('/api/settings', { body: collect() });
       toast(T('settings_saved'));
@@ -611,14 +767,14 @@ SCREENS.khoi_tao = async (box) => {
       await loadTrees();
     }) })));
 
-  box.appendChild(h('h2', { text: T('project_title') }));
-  box.appendChild(h('p', { class: 'muted', text: st.has_project ? T('project_open', { id: st.base_id }) : T('project_none') }));
+  box.appendChild(h('h2', { class: 'pad', text: T('project_title') }));
+  box.appendChild(h('p', { class: 'muted pad', text: st.has_project ? T('project_open', { id: st.base_id }) : T('project_none') }));
   const baseId = h('input', { id: 's-base_id', type: 'text' });
   const pname = h('input', { id: 's-project_name', type: 'text' });
   const space = h('input', { id: 's-space_id', type: 'text' });
-  box.appendChild(h('div', { class: 'kv' }, row('base_id', baseId), row('project_name', pname), row('space_id', space)));
-  const log = h('pre', { id: 'bootstrap-log', class: 'muted' });
-  box.appendChild(h('div', { class: 'toolbar' },
+  box.appendChild(h('div', { class: 'kv pad' }, row('base_id', baseId), row('project_name', pname), row('space_id', space)));
+  const log = h('pre', { id: 'bootstrap-log', class: 'muted pad' });
+  box.appendChild(h('div', { class: 'toolbar pad' },
     h('button', { class: 'btn primary', type: 'button', id: 'btn-bootstrap', text: T('btn_bootstrap'), onclick: () => guard(async () => {
       const res = await api('/api/bootstrap', { body: { base_id: baseId.value.trim(), project_name: pname.value.trim(), space_id: space.value.trim() } });
       log.textContent = res.log.join('\n');
@@ -627,33 +783,36 @@ SCREENS.khoi_tao = async (box) => {
     }) })));
   box.appendChild(log);
   if (st.has_project) {
-    box.appendChild(h('h2', { text: T('project_settings') }));
-    await tableScreen(box, 'cai_dat');
+    box.appendChild(h('h2', { class: 'pad', text: T('project_settings') }));
+    const grid = await gridFor(ws, 'cai_dat', { inline: true });
+    box.appendChild(grid.bar);
+    box.appendChild(grid.el);
   }
 };
 
-SCREENS.tong_quan = async (box) => {
+SCREENS.tong_quan = async (ws) => {
   const data = await api('/api/overview');
-  box.appendChild(h('h1', { text: T('nav_tong_quan') }));
-  box.appendChild(h('div', { class: 'counters', id: 'counters' }, data.counters.map((c) =>
+  const box = ws.p3;
+  ws.t2 = T('ov_my_leaves');
+  ws.t3 = T('nav_tong_quan');
+  ws.p2.appendChild(data.leaves.length ? h('ul', { class: 'plain list-pane', id: 'my-leaves' }, data.leaves.map((l) =>
+    h('li', { class: 'item', onclick: () => go('nut', { node: l.code }) }, h('b', { class: 'code', text: l.code }), h('span', { class: 'nm', text: l.name }), h('span', { class: 'nx', text: l.next }))))
+    : h('p', { class: 'muted pad', text: T('ov_no_leaves') }));
+  box.appendChild(h('div', { class: 'counters pad', id: 'counters' }, data.counters.map((c) =>
     h('div', { class: 'counter ' + (c.value ? 'bad' : 'good'), 'data-counter': c.name }, h('b', { text: String(c.value) }), c.text))));
-  box.appendChild(h('h2', { text: T('ov_my_leaves') }));
-  box.appendChild(data.leaves.length ? h('ul', { class: 'plain', id: 'my-leaves' }, data.leaves.map((l) =>
-    h('li', { class: 'click', onclick: () => go('nut', { node: l.code }) }, h('b', { text: l.code }), ' ' + l.name + ' - ', l.next)))
-    : h('p', { class: 'muted', text: T('ov_no_leaves') }));
-  box.appendChild(h('h2', { text: T('ov_my_warnings') + ' (' + data.warnings.length + ')' }));
+  box.appendChild(h('h2', { class: 'pad', text: T('ov_my_warnings') + ' (' + data.warnings.length + ')' }));
   box.appendChild(data.warnings.length ? h('ul', { class: 'plain' }, data.warnings.map((w) =>
-    h('li', { class: 'click', onclick: () => go(w.table === 'nut' ? 'cay' : 'nut', { node: w.node || '' }) },
+    h('li', { class: 'click', onclick: () => jumpTo(w.table, w.key) },
       h('b', { text: w.key || tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ', w.text)))
-    : h('p', { class: 'muted', text: T('ov_none') }));
-  box.appendChild(h('p', { class: 'muted', text: T('ov_total_warnings', { n: data.total_warnings }) }));
-  box.appendChild(h('h2', { text: T('ov_my_findings') + ' (' + data.my_findings.length + ')' }));
+    : h('p', { class: 'muted pad', text: T('ov_none') }));
+  box.appendChild(h('p', { class: 'muted pad', text: T('ov_total_warnings', { n: data.total_warnings }) }));
+  box.appendChild(h('h2', { class: 'pad', text: T('ov_my_findings') + ' (' + data.my_findings.length + ')' }));
   box.appendChild(data.my_findings.length
     ? h('ul', { class: 'plain', id: 'my-findings' }, data.my_findings.map(findingRow))
-    : h('p', { class: 'muted', text: T('ov_none') }));
-  box.appendChild(h('h2', { text: T('ov_my_tasks') }));
+    : h('p', { class: 'muted pad', text: T('ov_none') }));
+  box.appendChild(h('h2', { class: 'pad', text: T('ov_my_tasks') }));
   box.appendChild(data.tasks.length ? h('ul', { class: 'plain' }, data.tasks.map((t) =>
-    h('li', null, h('b', { text: t.key }), ' ' + t.title + (t.due ? ' - ' + t.due : '')))) : h('p', { class: 'muted', text: T('ov_none') }));
+    h('li', null, h('b', { text: t.key }), ' ' + t.title + (t.due ? ' - ' + t.due : '')))) : h('p', { class: 'muted pad', text: T('ov_none') }));
 };
 
 /* ---------- weekly review (docs/designs/review-first-pilot.md) ---------- */
@@ -690,7 +849,7 @@ async function closeFinding(f, status) {
         const text = (row.fields.mo_ta || f.text) + ' -- ' + T('rv_close_marker') + ': ' + reason.value.trim();
         await api('/api/draft', { body: { table: 'sai_lech', op: 'update', key: f.key, record_id: row.record_id,
           base_modified: row.modified, base_fields: row.base || row.fields, draft_id: row.draft || undefined,
-          fields: { trang_thai: status, mo_ta: text } } });
+          fields: { trang_thai: status, mo_ta: text }, partial: true } });
       } catch (e) { showError(e); return; }
       closeModal();
       delete S.tableCache.sai_lech;
@@ -700,32 +859,42 @@ async function closeFinding(f, status) {
   ]);
 }
 
-/** Ask which kind of remark it is, then open the finding form with the row's defaults filled in. */
+/** Ask which kind of remark it is, then save a draft finding with the row's defaults and open it in the grid below. */
 function addNote(ctx, review) {
   const radio = (value, key, on) => h('label', { class: 'radio' },
     h('input', { type: 'radio', name: 'rv-kind', value, checked: on }), ' ' + T(key));
   const rule = radio('rule', 'rv_kind_rule', false);
   const judgment = radio('judgment', 'rv_kind_judgment', true);
-  const owners = review.groups.map((g) => g.owner).filter(Boolean);
   modal(T('btn_note'), [h('p', { class: 'muted', text: T('rv_kind') }), rule, judgment], [
     h('button', { class: 'btn', type: 'button', text: T('btn_cancel'), onclick: closeModal }),
-    h('button', { class: 'btn primary', type: 'button', id: 'btn-note-ok', text: T('btn_continue'), onclick: () => {
+    h('button', { class: 'btn primary', type: 'button', id: 'btn-note-ok', text: T('btn_continue'), onclick: () => guard(async () => {
       const kind = rule.querySelector('input').checked ? 'rv_tag_rule' : 'rv_tag_judgment';
       const due = new Date(Date.now() + review.cycle_days * 86400000).toISOString().slice(0, 10);
       closeModal();
-      openForm({ table: 'sai_lech', pickers: { nguoi_nhan: owners }, prefill: {
-        ma_nut: ctx.node || '', nguoi_nhan: ctx.owner || '', ngay: new Date().toISOString().slice(0, 10), han: due,
-        mo_ta: '[' + T(kind) + '] ' + (ctx.code ? '[' + ctx.code + '] ' : ''), trang_thai: S.meta.values.change_open } });
-    } }),
+      const fields = { ngay: new Date().toISOString().slice(0, 10), han: due, trang_thai: S.meta.values.change_open,
+        mo_ta: '[' + T(kind) + '] ' + (ctx.code ? '[' + ctx.code + '] ' : '') };
+      if (ctx.node) fields.ma_nut = ctx.node;
+      if (ctx.owner) fields.nguoi_nhan = ctx.owner;
+      await startRow('sai_lech', fields);
+      toast(T('rv_note_started'));
+    }) }),
   ]);
 }
 
-SCREENS.ra_soat = async (box) => {
+SCREENS.ra_soat = async (ws) => {
   const data = await api('/api/review');
+  const box = ws.p3;
   const canEnd = (S.st || {}).role === 'system_designer';
+  ws.t2 = T('rv_groups');
+  ws.t3 = T('nav_ra_soat');
   const note = (ctx) => h('button', { class: 'btn small no-print', type: 'button', text: T('btn_note'), onclick: () => addNote(ctx, data) });
-  box.appendChild(h('h1', { text: T('nav_ra_soat') }));
-  box.appendChild(h('div', { class: 'toolbar no-print' },
+  ws.p2.appendChild(h('ul', { class: 'plain list-pane', id: 'review-index' }, data.groups.map((g) =>
+    h('li', { class: 'item', 'data-owner': g.owner, onclick: () => {
+      const sec = document.querySelector('.review-group[data-owner="' + g.owner + '"]');
+      if (sec) { sec.scrollIntoView({ block: 'start' }); sec.focus(); }
+    } }, h('span', { class: 'nm', text: g.owner || T('rv_group_system') }),
+    h('span', { class: 'nx', text: g.leaves.length + ' / ' + g.warnings.length + ' / ' + g.changed.length })))));
+  box.appendChild(h('div', { class: 'toolbar pad no-print' },
     h('button', { class: 'btn primary', type: 'button', id: 'btn-end-review', text: T('btn_end_review'), disabled: !canEnd,
       title: canEnd ? '' : T('role_needed'), onclick: () => guard(async () => {
         await api('/api/review/end', { body: {} });
@@ -734,14 +903,14 @@ SCREENS.ra_soat = async (box) => {
       }) }),
     h('button', { class: 'btn', type: 'button', id: 'btn-print', text: T('btn_print'), onclick: () => window.print() }),
     h('span', { class: 'muted', text: T('rv_since', { since: data.since }) })));
-  box.appendChild(h('div', { class: 'counters', id: 'counters' }, data.counters.map((c) =>
+  box.appendChild(h('div', { class: 'counters pad', id: 'counters' }, data.counters.map((c) =>
     h('div', { class: 'counter ' + (c.value ? 'bad' : 'good'), 'data-counter': c.name }, h('b', { text: String(c.value) }), c.text))));
-  box.appendChild(h('h2', { text: T('rv_findings') + ' (' + data.findings.length + ')' }));
+  box.appendChild(h('h2', { class: 'pad', text: T('rv_findings') + ' (' + data.findings.length + ')' }));
   box.appendChild(data.findings.length ? h('ul', { class: 'plain', id: 'review-findings' }, data.findings.map(findingRow))
-    : h('p', { class: 'muted', text: T('ov_none') }));
+    : h('p', { class: 'muted pad', text: T('ov_none') }));
   for (const g of data.groups) {
     if (!g.leaves.length && !g.warnings.length && !g.changed.length && g.owner) continue;
-    const sec = h('section', { class: 'review-group', 'data-owner': g.owner },
+    const sec = h('section', { class: 'review-group pad', 'data-owner': g.owner, tabindex: '-1' },
       h('h2', null, g.owner || T('rv_group_system'), ' ', note({ owner: g.owner })));
     if (g.leaves.length) {
       sec.appendChild(h('h3', { text: T('rv_leaves') }));
@@ -762,43 +931,25 @@ SCREENS.ra_soat = async (box) => {
     }
     box.appendChild(sec);
   }
+  box.appendChild(h('h2', { class: 'pad no-print', text: tableLabel('sai_lech') }));
+  const grid = await gridFor(ws, 'sai_lech', { inline: true });
+  box.appendChild(h('div', { class: 'no-print' }, grid.bar, grid.el));
 };
 
-SCREENS.yeu_cau = async (box) => {
-  box.appendChild(h('h1', { text: T('nav_yeu_cau') }));
-  await tableScreen(box, 'yeu_cau');
-};
+/* ---------- list + grid screens ---------- */
 
-SCREENS.kien_truc = async (box) => {
-  const data = await api('/api/architectures');
-  box.appendChild(h('h1', { text: T('nav_kien_truc') }));
-  box.appendChild(h('div', { class: 'toolbar' },
-    h('button', { class: 'btn primary', type: 'button', id: 'btn-new-kien_truc', text: T('btn_new'), onclick: () => openForm({ table: 'kien_truc' }) }),
-    h('button', { class: 'btn', type: 'button', text: T('btn_csv'), onclick: () => exportCsv('kien_truc') }),
-    h('span', { class: 'muted', text: T('arch_weights', { w: data.weights.join(' / ') }) })));
-  const cards = h('div', { class: 'cards', id: 'arch-cards' });
-  for (const c of data.cards) {
-    const f = c.fields;
-    const chosen = f.trang_thai === S.meta.values.arch_chosen;
-    const dl = h('dl', null,
-      ['diem_ky_thuat', 'diem_nguon_hang', 'diem_thoi_gian'].map((k, i) => [h('dt', { text: fieldLabel('kien_truc', k) }), h('dd', { text: num(c.scores[i]) })]),
-      h('dt', { text: T('arch_weighted') }), h('dd', { text: c.weighted === null ? '' : String(c.weighted) }),
-      h('dt', { text: fieldLabel('kien_truc', 'trang_thai') }), h('dd', { text: num(f.trang_thai) }),
-      h('dt', { text: fieldLabel('kien_truc', 'ly_do') }), h('dd', { text: num(f.ly_do) }));
-    const card = h('div', { class: 'card' + (chosen ? ' chosen' : '') + (c.draft ? ' draft' : ''), 'data-key': c.key },
-      h('h3', { text: c.key + ' - ' + num(f.ten) }),
-      c.draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null,
-      h('p', { class: 'muted', text: num(f.nguyen_ly) }), dl,
-      c.warnings.map((w) => h('div', { class: 'err', text: w })),
-      h('div', { class: 'toolbar' },
-        h('button', { class: 'btn', type: 'button', text: T('btn_edit'), onclick: () => openRow('kien_truc', c.key) }),
-        h('button', { class: 'btn primary', type: 'button', 'data-choose': c.key, disabled: !data.can_choose || chosen,
-          title: data.can_choose ? '' : T('role_needed'), text: T('btn_choose'), onclick: () => chooseArchitecture(c) })));
-    cards.appendChild(card);
-  }
-  box.appendChild(cards);
-  if (!data.cards.length) box.appendChild(h('p', { class: 'muted', text: T('empty') }));
-};
+SCREENS.yeu_cau = (ws) => listAndGrid(ws, 'yeu_cau', { side: (r) => T('n_nodes', { n: (r.extras || {}).n_nodes || 0 }) });
+
+SCREENS.kien_truc = (ws) => listAndGrid(ws, 'kien_truc', {
+  side: (r) => ((r.extras || {}).weighted === null || (r.extras || {}).weighted === undefined ? '' : String(r.extras.weighted)),
+  actions: (row) => {
+    const allowed = (S.st || {}).role === 'system_designer';
+    const chosen = row.fields.trang_thai === S.meta.values.arch_chosen;
+    return h('button', { class: 'btn small', type: 'button', 'data-choose': row.key, disabled: !allowed || chosen,
+      title: allowed ? '' : T('role_needed'), text: T('btn_choose'),
+      onclick: () => chooseArchitecture({ key: row.key, fields: row.fields, base: row.base, record_id: row.record_id, modified: row.modified, draft: row.draft }) });
+  },
+});
 
 async function chooseArchitecture(card) {
   const reason = h('textarea', { id: 'choose-reason', rows: '3' });
@@ -810,7 +961,7 @@ async function chooseArchitecture(card) {
       if (!reason.value.trim()) { err.textContent = T('arch_reason_needed'); return; }
       try {
         await api('/api/draft', { body: { table: 'kien_truc', op: 'update', key: card.key, record_id: card.record_id,
-          base_modified: card.modified, base_fields: card.fields, draft_id: card.draft || undefined,
+          base_modified: card.modified, base_fields: card.base || card.fields, draft_id: card.draft || undefined,
           fields: { trang_thai: S.meta.values.arch_chosen, ly_do: reason.value.trim() } } });
       } catch (e) { showError(e); return; }
       closeModal();
@@ -820,69 +971,63 @@ async function chooseArchitecture(card) {
   ]);
 }
 
-SCREENS.cay = async (box) => {
-  const data = await api('/api/tree_nodes');
-  box.appendChild(h('h1', { text: T('nav_cay') }));
-  const bar = h('div', { class: 'toolbar' });
-  for (const key of Object.keys(data.gates)) {
-    const cb = h('input', { type: 'checkbox', id: 'gate-' + key, disabled: !data.can_gate, checked: data.gates[key] || false,
-      title: data.can_gate ? '' : T('role_needed') });
-    cb.addEventListener('change', () => setGate(key, cb.checked, cb));
-    bar.appendChild(h('label', { class: 'switch' }, cb, T('gate_' + key)));
-  }
-  bar.appendChild(h('button', { class: 'btn primary', type: 'button', id: 'btn-new-nut', text: T('btn_new'), onclick: () => openForm({ table: 'nut' }) }));
-  bar.appendChild(h('button', { class: 'btn', type: 'button', text: T('btn_csv'), onclick: () => exportCsv('nut') }));
-  box.appendChild(bar);
-  const t = h('table', { class: 'grid', id: 'node-tree' });
-  t.appendChild(h('thead', null, h('tr', null, ['', T('col_node'), T('col_level'), T('col_owner'), T('col_next'), T('col_cost'), ''].map((x) => h('th', { class: 'nosort', text: x })))));
-  const body = h('tbody');
-  for (const n of data.nodes) {
-    const tr = h('tr', { class: 'indent-row' + (n.draft ? ' is-draft' : ''), 'data-node': n.code, onclick: () => selectNode(n.code) },
-      h('td', null, n.draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null,
-        n.warnings.length ? h('span', { class: 'badge warn', title: n.warnings.join('\n'), text: '! ' + n.warnings.length }) : null),
-      h('td', { style: 'padding-left:' + (8 + n.depth * 20) + 'px' }, h('b', { text: n.code }), ' ' + n.name),
-      h('td', { text: String(n.level) }), h('td', { text: n.owner }), h('td', { text: n.next }), h('td', { class: 'num', text: String(n.cost) }),
-      h('td', null,
-        h('button', { class: 'btn', type: 'button', text: T('btn_edit'), onclick: (ev) => { ev.stopPropagation(); openRow('nut', n.code); } }),
-        n.level < 2 ? h('button', { class: 'btn', type: 'button', 'data-add-child': n.code, text: T('btn_add_child'),
-          onclick: (ev) => { ev.stopPropagation(); openForm({ table: 'nut', prefill: { ma_cha: n.code } }); } }) : null,
-        n.leaf ? h('button', { class: 'btn', type: 'button', text: T('btn_open_node'), onclick: (ev) => { ev.stopPropagation(); go('nut', { node: n.code }); } }) : null));
-    body.appendChild(tr);
-  }
-  t.appendChild(body);
-  box.appendChild(h('div', { class: 'tablewrap' }, t));
-  if (!data.nodes.length) box.appendChild(h('p', { class: 'muted', text: T('empty') }));
+SCREENS.rfq = (ws) => listAndGrid(ws, 'rfq', {});
+
+SCREENS.moc = async (ws) => {
+  const active = S.tabs.moc || 'moc';
+  ws.tabs = { items: SCREEN_TABS.moc.map((k) => ({ key: k })), active, pick: (k) => { S.tabs.moc = k; render(); } };
+  await listAndGrid(ws, active, {});
 };
 
-async function setGate(key, value, checkbox) {
-  try {
-    const rows = await getRows('cai_dat');
-    const existing = rows.rows.find((r) => r.key === key);
-    const text = value ? S.meta.values.yes : S.meta.values.no;
-    const body = existing
-      ? { table: 'cai_dat', op: 'update', key, record_id: existing.record_id, base_modified: existing.modified, base_fields: existing.base,
-          draft_id: existing.draft || undefined, fields: { gia_tri: text } }
-      : { table: 'cai_dat', op: 'create', fields: { khoa: key, gia_tri: text } };
-    await api('/api/draft', { body });
-    toast(T('draft_saved'));
-    await refreshAll();
-  } catch (e) {
-    checkbox.checked = !value;
-    showError(e);
+SCREENS.mua_hang = async (ws) => {
+  const q = await api('/api/sourcing');
+  const grid = await listAndGrid(ws, 'mua_hang', {});
+  ws.t2 = T('src_queue') + ' (' + q.queue.length + ')';
+  ws.p2.textContent = '';
+  ws.p2.appendChild(q.queue.length ? h('ul', { class: 'plain list-pane', id: 'src-queue' }, q.queue.map((c) =>
+    h('li', { class: 'item', 'data-uv': c.uv, onclick: () => guard(() => startRow('mua_hang', { ma_uv: c.uv, tien_te: c.currency || undefined })) },
+      h('b', { class: 'code', text: c.uv }), h('span', { class: 'nm', text: withName('nut', c.node) + ' - ' + [c.hang, c.model].filter(Boolean).join(' ') }),
+      h('span', { class: 'nx', text: c.price !== null && c.price !== undefined ? c.price + ' ' + c.currency : '' }))))
+    : h('p', { class: 'muted pad', text: T('src_queue_empty') }));
+  ws.t3 = T('src_rows');
+  return grid;
+};
+
+/* ---------- node workspace: chart in pane 2, tabs in pane 3 ---------- */
+
+function compareBlock(cmp, node) {
+  const ct = h('table', { class: 'grid compact', id: 'compare' });
+  ct.appendChild(h('thead', null, h('tr', null, h('th', { class: 'ro', text: T('col_spec') }),
+    cmp.candidates.map((uv) => h('th', { class: 'ro' }, uv, h('div', { class: cmp.pass[uv] ? 'pass' : 'unchecked', text: cmp.results[uv] }))))));
+  ct.appendChild(h('tbody', null, cmp.rows.map((r) => h('tr', { 'data-spec': r.ts },
+    h('td', null, h('b', { text: r.ts }), ' ' + r.name, h('div', { class: 'muted', text: [r.min, r.max].map(num).join(' ... ') + ' ' + r.unit + ' (' + r.muc + ')' })),
+    r.cells.map((c) => h('td', { class: 'cell', 'data-cell': c.uv + '|' + r.ts, title: [c.quote, c.page].filter(Boolean).join(' / '),
+      onclick: () => (Workspace.grid ? checkCell(c.uv, r.ts) : null) },
+      h('span', { class: c.state === 'pass' ? 'pass' : (c.state === 'fail' ? 'fail' : 'unchecked'), text: c.state === 'unchecked' ? '?' : num(c.value) || T('state_' + c.state) }),
+      c.draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null))))));
+  return h('div', { class: 'tablewrap' }, ct);
+}
+
+/** A cell of the comparison: go to its row in the table below, or start the row when nobody has checked it yet. */
+async function checkCell(uv, ts) {
+  const key = uv + '|' + ts;
+  const rows = await getRows('doi_chieu', { node: S.node });
+  if (rows.rows.some((r) => r.key === key)) {
+    S.pendingSelect = { table: 'doi_chieu', key };
+    S.tabs[S.screen] = 'doi_chieu';
+    render();
+  } else {
+    S.tabs[S.screen] = 'doi_chieu';
+    await guard(() => startRow('doi_chieu', { khoa: key, ma_uv: uv, ma_ts: ts }));
   }
 }
 
-SCREENS.phan_bo = async (box) => {
-  const data = await api('/api/alloc');
-  box.appendChild(h('h1', { text: T('nav_phan_bo') }));
-  box.appendChild(h('div', { class: 'toolbar' },
-    h('button', { class: 'btn primary', type: 'button', id: 'btn-new-phan_bo', text: T('btn_new'), onclick: () => openForm({ table: 'phan_bo' }) }),
-    h('button', { class: 'btn', type: 'button', text: T('btn_csv'), onclick: () => exportCsv('phan_bo') })));
-  const t = h('table', { class: 'grid', id: 'alloc-matrix' });
+function allocMatrix(data) {
+  const t = h('table', { class: 'grid compact', id: 'alloc-matrix' });
   t.appendChild(h('thead', null, h('tr', null,
-    h('th', { class: 'nosort', text: T('col_requirement') }),
-    data.nodes.map((n) => h('th', { class: 'nosort', title: withName('nut', n), text: withName('nut', n) })),
-    h('th', { class: 'nosort', text: T('col_budget_total') }), h('th', { class: 'nosort', text: T('col_margin') }))));
+    h('th', { class: 'ro', text: T('col_requirement') }),
+    data.nodes.map((n) => h('th', { class: 'ro', title: withName('nut', n), text: n })),
+    h('th', { class: 'ro', text: T('col_budget_total') }), h('th', { class: 'ro', text: T('col_margin') }))));
   const body = h('tbody');
   for (const r of data.requirements) {
     const b = data.budgets[r.code];
@@ -891,7 +1036,10 @@ SCREENS.phan_bo = async (box) => {
       const cell = data.cells[r.code + '|' + n];
       const td = h('td', { class: 'cell' + (cell && cell.draft ? ' over' : ''), 'data-cell': r.code + '|' + n,
         title: cell ? cell.key + ' ' + cell.kieu : T('alloc_create'),
-        onclick: () => (cell ? openRow('phan_bo', cell.key) : openForm({ table: 'phan_bo', prefill: { ma_yc: r.code, ma_nut: n } })) });
+        onclick: () => {
+          if (cell) { S.pendingSelect = { table: 'phan_bo', key: cell.key }; S.tabs[S.screen] = 'phan_bo'; render(); }
+          else guard(() => startRow('phan_bo', { ma_yc: r.code, ma_nut: n }));
+        } });
       td.textContent = cell ? (cell.value !== null && cell.value !== undefined ? String(cell.value) : '•') : '';
       tr.appendChild(td);
     }
@@ -900,135 +1048,70 @@ SCREENS.phan_bo = async (box) => {
     body.appendChild(tr);
   }
   t.appendChild(body);
-  box.appendChild(h('div', { class: 'tablewrap' }, t));
-  if (!data.requirements.length) box.appendChild(h('p', { class: 'muted', text: T('empty') }));
-};
-
-SCREENS.nut = async (box) => {
-  const data = await api('/api/node', { query: { code: S.node } });
-  box.appendChild(h('h1', { text: T('nav_nut') }));
-  if (!data.node) {
-    box.appendChild(h('p', { class: 'muted', text: T('node_pick') }));
-    box.appendChild(h('ul', { class: 'plain', id: 'leaf-list' }, data.leaves.map((l) =>
-      h('li', { class: 'click', onclick: () => selectNode(l.code) }, h('b', { text: l.code }), ' ' + l.name + (l.owner ? ' - ' + l.owner : '')))));
-    return;
-  }
-  const n = data.node;
-  box.appendChild(h('div', { class: 'toolbar' },
-    h('button', { class: 'btn', type: 'button', text: T('node_back'), onclick: () => selectNode('') }),
-    h('b', { text: n.ma_nut + ' ' + (n.ten || '') }), h('span', { class: 'muted', text: (n.phu_trach || T('none')) + ' - ' + n.next })));
-  if (!n.leaf) box.appendChild(h('p', { class: 'muted', text: T('node_not_leaf') }));
-
-  const section = (title, addTable, prefill, el) => {
-    box.appendChild(h('h2', { text: title }));
-    if (addTable && n.leaf) box.appendChild(h('div', { class: 'toolbar' }, h('button', { class: 'btn', type: 'button', 'data-add': addTable, text: T('btn_new') + ' ' + tableLabel(addTable),
-      onclick: () => openForm({ table: addTable, prefill }) })));
-    box.appendChild(el);
-  };
-  const simple = (table, rows, cols, extra) => {
-    const t = h('table', { class: 'grid', 'data-table': table });
-    t.appendChild(h('thead', null, h('tr', null, h('th', { class: 'nosort' }), cols.map((c) => h('th', { class: 'nosort', text: fieldLabel(table, c) })), extra ? h('th', { class: 'nosort', text: extra.label }) : null)));
-    t.appendChild(h('tbody', null, rows.map((r) => {
-      const idName = specOf(table).id_field;
-      return h('tr', { class: r._draft ? 'is-draft' : '', 'data-key': r[idName] || r._key, onclick: () => openRow(table, r[idName] || r._key) },
-        h('td', null, r._draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null,
-          (r._warnings && r._warnings.length) ? h('span', { class: 'badge warn', title: r._warnings.join('\n'), text: '! ' + r._warnings.length }) : null),
-        cols.map((c) => h('td', { text: ((specOf(table).fields[c] || {}).ref ? cellText(table, c, r[c]) : num(r[c])) })), extra ? h('td', { text: extra.get(r) }) : null);
-    })));
-    return h('div', { class: 'tablewrap' }, t);
-  };
-  section(T('node_alloc'), 'phan_bo', { ma_nut: n.ma_nut }, simple('phan_bo', data.allocations, ['ma_pb', 'ma_yc', 'kieu', 'gia_tri_phan_bo', 'don_vi']));
-  section(T('node_specs'), 'thong_so', { ma_nut: n.ma_nut }, simple('thong_so', data.specs, ['ma_ts', 'ma_yc_goc', 'thong_so', 'gia_tri_min', 'gia_tri_max', 'don_vi', 'muc']));
-  section(T('node_cands'), 'ung_vien', { ma_nut: n.ma_nut }, simple('ung_vien', data.candidates, ['ma_uv', 'hang', 'model', 'gia_cong_bo', 'tien_te', 'trang_thai'], { label: T('extra_result'), get: (r) => r._result }));
-
-  const cmp = data.compare;
-  box.appendChild(h('h2', { text: T('node_compare') }));
-  if (!cmp.candidates.length || !cmp.rows.length) {
-    box.appendChild(h('p', { class: 'muted', text: T('node_compare_empty') }));
-    return;
-  }
-  const ct = h('table', { class: 'grid', id: 'compare' });
-  ct.appendChild(h('thead', null, h('tr', null, h('th', { class: 'nosort', text: T('col_spec') }),
-    cmp.candidates.map((uv) => h('th', { class: 'nosort' }, uv, h('div', { class: cmp.pass[uv] ? 'pass' : 'unchecked', text: cmp.results[uv] }))))));
-  ct.appendChild(h('tbody', null, cmp.rows.map((r) => h('tr', { 'data-spec': r.ts },
-    h('td', null, h('b', { text: r.ts }), ' ' + r.name, h('div', { class: 'muted', text: [r.min, r.max].map(num).join(' ... ') + ' ' + r.unit + ' (' + r.muc + ')' })),
-    r.cells.map((c) => h('td', { class: 'cell', 'data-cell': c.uv + '|' + r.ts, title: [c.quote, c.page].filter(Boolean).join(' / '),
-      onclick: () => editCheck(c.uv, r.ts, n.ma_nut) },
-      h('span', { class: c.state === 'pass' ? 'pass' : (c.state === 'fail' ? 'fail' : 'unchecked'), text: c.state === 'unchecked' ? '?' : num(c.value) || T('state_' + c.state) }),
-      c.draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null))))));
-  box.appendChild(h('div', { class: 'tablewrap' }, ct));
-};
-
-async function editCheck(uv, ts, node) {
-  const key = uv + '|' + ts;
-  const data = await getRows('doi_chieu', { node });
-  const row = data.rows.find((r) => r.key === key);
-  if (row) openForm({ table: 'doi_chieu', row });
-  else openForm({ table: 'doi_chieu', prefill: { ma_uv: uv, ma_ts: ts, khoa: key } });
+  return h('div', { class: 'tablewrap' }, t);
 }
 
-SCREENS.mua_hang = async (box) => {
-  const q = await api('/api/sourcing');
-  box.appendChild(h('h1', { text: T('nav_mua_hang') }));
-  box.appendChild(h('h2', { text: T('src_queue') + ' (' + q.queue.length + ')' }));
-  box.appendChild(q.queue.length ? h('ul', { class: 'plain', id: 'src-queue' }, q.queue.map((c) =>
-    h('li', { class: 'click', 'data-uv': c.uv, onclick: () => openForm({ table: 'mua_hang', prefill: { ma_uv: c.uv, tien_te: c.currency } }) },
-      h('b', { text: c.uv }), ' ' + withName('nut', c.node) + ' - ' + [c.hang, c.model].filter(Boolean).join(' ') + (c.price !== null && c.price !== undefined ? ' - ' + c.price + ' ' + c.currency : ''))))
-    : h('p', { class: 'muted', text: T('src_queue_empty') }));
-  box.appendChild(h('h2', { text: T('src_rows') }));
-  await tableScreen(box, 'mua_hang');
-};
+async function hierarchy(ws) {
+  await chartPane(ws);
+  const screen = S.screen;
+  const tabs = SCREEN_TABS[screen];
+  const active = S.tabs[screen] || DEFAULT_TAB[screen];
+  const counts = await Promise.all(tabs.map((t) => getRows(t, { node: S.node }).then((d) => d.rows.length)));
+  ws.tabs = { items: tabs.map((k, i) => ({ key: k, count: counts[i] })), active, pick: (k) => { S.tabs[screen] = k; render(); } };
+  let info = null;
+  if (S.node) info = await api('/api/node', { query: { code: S.node } });
+  ws.t3 = S.node && info && info.node
+    ? T('p3_node', { node: withName('nut', S.node) }) + ' - ' + (info.node.phu_trach || T('none')) + ' - ' + info.node.next
+    : T('p3_all_nodes');
+  const fields = specOf(active).fields;
+  const prefill = {};
+  if (S.node) { if (fields.ma_cha) prefill.ma_cha = S.node; else if (fields.ma_nut) prefill.ma_nut = S.node; }
+  if (active === 'doi_chieu' && info && info.compare && info.compare.candidates.length && info.compare.rows.length) {
+    ws.p3.appendChild(compareBlock(info.compare, S.node));
+  }
+  if (active === 'phan_bo') ws.p3.appendChild(allocMatrix(await api('/api/alloc')));
+  const grid = await gridFor(ws, active, { node: S.node, prefill, onChange: () => { /* counts refresh on the next render */ } });
+  ws.p3.appendChild(grid.el);
+}
+SCREENS.cay = hierarchy;
+SCREENS.phan_bo = hierarchy;
+SCREENS.nut = hierarchy;
 
-SCREENS.rfq = async (box) => {
-  box.appendChild(h('h1', { text: T('nav_rfq') }));
-  const data = await getRows('rfq');
-  const states = [...new Set(data.rows.map((r) => r.fields.trang_thai || ''))];
-  const bar = h('div', { class: 'toolbar' });
-  const sel = h('select', { id: 'rfq-status' }, h('option', { value: '', text: T('rfq_all_status') }), states.map((s) => h('option', { value: s, text: s || T('none') })));
-  bar.appendChild(h('button', { class: 'btn primary', type: 'button', id: 'btn-new-rfq', text: T('btn_new'), onclick: () => openForm({ table: 'rfq' }) }));
-  bar.appendChild(sel);
-  bar.appendChild(h('button', { class: 'btn', type: 'button', text: T('btn_csv'), onclick: () => exportCsv('rfq') }));
-  box.appendChild(bar);
-  const holder = h('div');
-  const draw = () => {
-    holder.textContent = '';
-    const rows = data.rows.filter((r) => !sel.value || (r.fields.trang_thai || '') === sel.value);
-    holder.appendChild(tableView('rfq', Object.assign({}, data, { rows }), { link: 'link_tai_lieu' }));
-  };
-  sel.addEventListener('change', draw);
-  draw();
-  box.appendChild(holder);
-};
+/* ---------- commit ---------- */
 
-SCREENS.moc = async (box) => {
-  box.appendChild(h('h1', { text: T('nav_moc') }));
-  box.appendChild(h('h2', { text: tableLabel('moc') }));
-  await tableScreen(box, 'moc');
-  box.appendChild(h('h2', { text: tableLabel('quyet_dinh') }));
-  await tableScreen(box, 'quyet_dinh');
-};
-
-SCREENS.commit = async (box) => {
+SCREENS.commit = async (ws) => {
   const data = await api('/api/drafts');
   const st = S.st || (await loadState());
-  box.appendChild(h('h1', { text: T('nav_commit') }));
-  const results = h('div', { id: 'commit-results' });
-  const btn = h('button', { class: 'btn primary', type: 'button', id: 'btn-commit', text: T('btn_commit'),
+  const box = ws.p3;
+  ws.t2 = T('nav_commit') + ' (' + data.drafts.length + ')';
+  ws.t3 = T('nav_commit');
+  ws.p2.appendChild(data.drafts.length ? h('ul', { class: 'plain list-pane', id: 'draft-index' }, data.drafts.map((d) =>
+    h('li', { class: 'item', 'data-draft': d.id, onclick: () => jumpTo(d.table, d.key) },
+      h('span', { class: 'dot ' + (d.valid ? 'g' : 'r') }), h('span', { class: 'nm', text: tableLabel(d.table) + ' ' + d.key }), h('span', { class: 'nx', text: T('op_' + d.op) }))))
+    : h('p', { class: 'muted pad', text: T('drafts_empty') }));
+  const results = h('div', { id: 'commit-results', class: 'pad' });
+  const btn = h('button', { class: 'btn primary', type: 'button', id: 'btn-commit', text: T('btn_commit'), 'data-focus-first': true,
     disabled: !st.can_commit || !data.drafts.length, title: st.can_commit ? '' : T('commit_disabled'),
     onclick: () => runCommit(results) });
-  box.appendChild(h('div', { class: 'toolbar' }, btn, st.can_commit ? null : h('span', { class: 'err', text: T('commit_disabled') })));
-  if (!data.drafts.length) box.appendChild(h('p', { class: 'muted', text: T('drafts_empty') }));
+  box.appendChild(h('div', { class: 'toolbar pad' }, btn, st.can_commit ? null : h('span', { class: 'err', text: T('commit_disabled') })));
+  if (!data.drafts.length) box.appendChild(h('p', { class: 'muted pad', text: T('drafts_empty') }));
   else {
     const t = h('table', { class: 'grid', id: 'draft-list' });
-    t.appendChild(h('thead', null, h('tr', null, [T('col_table'), T('col_key'), T('col_op'), T('col_state'), ''].map((x) => h('th', { class: 'nosort', text: x })))));
-    t.appendChild(h('tbody', null, data.drafts.map((d) => h('tr', { 'data-draft': d.id, onclick: () => openRow(d.table, d.key) },
+    t.appendChild(h('thead', null, h('tr', null, [T('col_table'), T('col_key'), T('col_op'), T('col_state'), ''].map((x) => h('th', { class: 'ro', text: x })))));
+    t.appendChild(h('tbody', null, data.drafts.map((d) => h('tr', { 'data-draft': d.id, onclick: () => jumpTo(d.table, d.key) },
       h('td', { text: tableLabel(d.table) }), h('td', { text: d.key }), h('td', { text: T('op_' + d.op) }),
       h('td', { class: d.valid ? 'ok' : 'err', text: d.valid ? T('valid') : d.issues.map((i) => fieldLabel(d.table, i.field) + ': ' + i.message).join('; ') }),
-      h('td', null, h('button', { class: 'btn', type: 'button', 'data-discard': d.id, text: T('btn_discard'), onclick: (ev) => { ev.stopPropagation(); discardDraft(d); } }))))));
+      h('td', null, h('button', { class: 'btn small', type: 'button', 'data-discard': d.id, text: T('btn_discard'), onclick: (ev) => { ev.stopPropagation(); discardDraft(d); } }))))));
     box.appendChild(h('div', { class: 'tablewrap' }, t));
   }
   box.appendChild(results);
 };
+
+/** The top bar button and Ctrl+Enter: open Commit with its button ready. Nothing is sent until that button is pressed. */
+function commitNow() {
+  S.afterRender = () => { const b = document.getElementById('btn-commit'); if (b) b.focus(); };
+  go('commit');
+}
 
 async function discardDraft(d) {
   if (!window.confirm(T('confirm_discard', { key: d.key }))) return;
@@ -1050,8 +1133,8 @@ async function runCommit(out) {
   for (const r of res.results) {
     const li = h('li', { 'data-status': r.status, class: r.status === 'committed' ? 'ok' : 'err' },
       h('b', { text: tableLabel(r.table) + ' ' + r.key }), ' - ' + T('res_' + r.status) + (r.message ? ': ' + r.message : ''));
-    if (r.status === 'conflict' && r.conflict) li.appendChild(h('button', { class: 'btn', type: 'button', 'data-resolve': r.draft_id, text: T('btn_resolve'), onclick: () => conflictDialog(r) }));
-    if (r.status === 'stale' && r.stale) li.appendChild(h('button', { class: 'btn', type: 'button', 'data-resolve': r.draft_id, text: T('btn_resolve'), onclick: () => staleDialog(r) }));
+    if (r.status === 'conflict' && r.conflict) li.appendChild(h('button', { class: 'btn small', type: 'button', 'data-resolve': r.draft_id, text: T('btn_resolve'), onclick: () => conflictDialog(r) }));
+    if (r.status === 'stale' && r.stale) li.appendChild(h('button', { class: 'btn small', type: 'button', 'data-resolve': r.draft_id, text: T('btn_resolve'), onclick: () => staleDialog(r) }));
     list.appendChild(li);
   }
   out.appendChild(list);
@@ -1095,7 +1178,7 @@ function staleDialog(r) {
       h('td', { text: fieldLabel(info.table, f.field) }), h('td', { text: String(num(f.base)) }),
       h('td', null, radio('mine', String(num(f.mine)))), h('td', null, radio('theirs', String(num(f.theirs)))));
   });
-  const t = h('table', { class: 'grid' }, h('thead', null, h('tr', null, [T('col_field'), T('stale_base'), T('stale_mine'), T('stale_theirs')].map((x) => h('th', { class: 'nosort', text: x })))), h('tbody', null, rows));
+  const t = h('table', { class: 'grid' }, h('thead', null, h('tr', null, [T('col_field'), T('stale_base'), T('stale_mine'), T('stale_theirs')].map((x) => h('th', { class: 'ro', text: x })))), h('tbody', null, rows));
   modal(T('stale_title', { key: info.key }), [h('p', { text: T('stale_text', { by: info.modified_by || T('unknown') }) }), t], [
     h('button', { class: 'btn', type: 'button', text: T('btn_later'), onclick: closeModal }),
     h('button', { class: 'btn primary', type: 'button', id: 'btn-apply-stale', text: T('btn_apply_choice'), onclick: async () => {
@@ -1109,37 +1192,30 @@ function staleDialog(r) {
   ]);
 }
 
-/* ---------- keyboard ---------- */
-
-document.addEventListener('keydown', (ev) => {
-  const mod = ev.ctrlKey || ev.metaKey;
-  if (ev.key === 'F1') { ev.preventDefault(); widenPanel(); return; }
-  if (mod && (ev.key === 's' || ev.key === 'S')) {
-    ev.preventDefault();
-    if (S.form) S.form.save();
-    return;
-  }
-  if (mod && ev.key === 'Enter') { ev.preventDefault(); closeModal(); go('commit'); return; }
-  if (ev.key === 'Escape' && S.form) closeModal();
-});
-
 /* ---------- start ---------- */
 
 async function start() {
   try {
     S.meta = await api('/api/meta');
   } catch (e) {
-    document.getElementById('main').textContent = String((e.err && e.err.detail) || e);
+    document.getElementById('p3-body').textContent = String((e.err && e.err.detail) || e);
     return;
   }
   for (const el of document.querySelectorAll('[data-i]')) el.textContent = T(el.dataset.i);
   for (const el of document.querySelectorAll('[data-i-title]')) el.title = T(el.dataset.iTitle);
+  for (const el of document.querySelectorAll('[data-i-label]')) el.setAttribute('aria-label', T(el.dataset.iLabel));
   document.getElementById('panel-toggle').addEventListener('click', () => setPanel(S.panel === 'strip' ? 'open' : 'strip'));
   document.getElementById('panel-wide').addEventListener('click', widenPanel);
   document.getElementById('panel-strip').addEventListener('click', () => setPanel('open'));
   let saved = 'open';
-  try { saved = localStorage.getItem('t3_panel') || 'open'; } catch (e) { /* no storage: keep the default */ }
-  setPanel(saved === 'strip' ? 'strip' : 'open');
+  try {
+    saved = localStorage.getItem('t3_panel') || 'open';
+    for (const key of ['--p1w', '--p2w', '--p4w']) {
+      const w = localStorage.getItem('t3' + key);
+      if (w) document.documentElement.style.setProperty(key, w + 'px');
+    }
+  } catch (e) { /* no storage: keep the default widths */ }
+  setPanel(saved);
   buildNav();
   const st = await loadState();
   S.treeName = st ? st.tree : '';

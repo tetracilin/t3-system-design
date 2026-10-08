@@ -8,22 +8,37 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<header id="top"><b class="brand">T3 Desk</b><div id="top-info"></div></header>
 <div id="shell" data-panel="open">
-  <nav id="nav" aria-label="nav"></nav>
-  <main id="main" tabindex="-1"></main>
-  <aside id="panel" aria-label="tree">
-    <div id="panel-head">
-      <button id="panel-toggle" type="button" data-i-title="panel_toggle"></button>
-      <span id="panel-title" data-i="panel_title"></span>
-      <button id="panel-wide" type="button" data-i-title="panel_wide">F1</button>
+  <section class="pane" id="pane1" data-pane="1" aria-labelledby="p1-title" tabindex="-1">
+    <div class="ph"><h2 id="p1-title" data-i="pane1_title"></h2>
+      <button id="panel-toggle" type="button" data-i-title="panel_toggle" class="btn small"></button>
+      <button id="panel-wide" type="button" data-i-title="panel_wide" class="btn small">F1</button></div>
+    <div class="p1-scroll">
+      <nav id="nav" aria-label="nav"></nav>
+      <div id="tree-box">
+        <div class="ph sub"><span data-i="tree_title"></span></div>
+        <div id="tree-tabs" role="tablist"></div>
+        <div id="panel-node"></div>
+        <div id="tree-list"></div>
+        <div id="tree-help"></div>
+      </div>
     </div>
-    <div id="panel-body">
-      <div id="panel-node"></div>
-      <div id="tree-tabs" role="tablist"></div>
-      <div id="tree-view"></div>
-      <div id="tree-help"></div>
-    </div>
-    <div id="panel-strip" data-i="panel_title"></div>
+    <button id="panel-strip" type="button" data-i="panel_title"></button>
+  </section>
+  <section class="pane" id="pane2" data-pane="2" aria-labelledby="p2-title" tabindex="-1">
+    <div class="ph"><h2 id="p2-title"></h2></div>
+    <div class="pbody" id="p2-body"></div>
+  </section>
+  <section class="pane" id="pane3" data-pane="3" aria-labelledby="p3-title" tabindex="-1">
+    <div class="ph"><h2 id="p3-title"></h2></div>
+    <div id="p3-tabs" role="tablist" hidden></div>
+    <div id="p3-bar" hidden></div>
+    <div class="pbody" id="p3-body"></div>
+  </section>
+  <aside class="pane" id="pane4" data-pane="4" aria-labelledby="p4-title" tabindex="-1">
+    <div class="ph"><h2 id="p4-title"></h2></div>
+    <div class="pbody" id="p4-body"></div>
   </aside>
 </div>
 <footer id="status" role="status"></footer>
@@ -31,5 +46,8 @@
 <div id="modal-root"></div>
 <script src="/tree.js"></script>
 <script src="/app.js"></script>
+<script src="/notes.js"></script>
+<script src="/grid.js"></script>
+<script src="/keys.js"></script>
 </body>
 </html>

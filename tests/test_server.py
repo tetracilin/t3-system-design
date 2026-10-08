@@ -103,7 +103,7 @@ def test_serves_ui_files_and_injects_the_session(http: tuple[server.RunningServe
     status, body = fetch(running, "/")
     assert status == 200 and b"T3 Desk" in body
     assert env.app.session.encode() in body and b"__SESSION__" not in body
-    for name in ("app.js", "tree.js", "style.css"):
+    for name in ("app.js", "tree.js", "notes.js", "grid.js", "keys.js", "style.css"):
         assert fetch(running, "/" + name)[0] == 200
     assert fetch(running, "/server.py")[0] == 404
     assert fetch(running, "/../server.py")[0] in (403, 404)
@@ -137,7 +137,7 @@ def ui_labels() -> dict[str, str]:
 
 def test_every_label_the_ui_asks_for_exists() -> None:
     labels = ui_labels()
-    js = (UI_DIR / "app.js").read_text(encoding="utf-8") + (UI_DIR / "index.html").read_text(encoding="utf-8")
+    js = "".join((UI_DIR / n).read_text(encoding="utf-8") for n in ("app.js", "notes.js", "grid.js", "keys.js", "index.html"))
     literal = set(re.findall(r"T\('([a-z_0-9]+)'", js)) | set(re.findall(r'data-i(?:-title)?="([a-z_0-9]+)"', js))
     literal = {k for k in literal if not k.endswith("_")}
     expected = set(literal)
@@ -162,7 +162,7 @@ def test_ui_files_have_no_vietnamese_literals_and_no_external_urls() -> None:
     vietnamese = re.compile("[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-ê"
                             "ìíò-õùúýĂăĐđĨĩŨũ"
                             "ƠơƯưẠ-ỹ]")
-    for name in ("index.html", "app.js", "tree.js", "style.css"):
+    for name in ("index.html", "app.js", "tree.js", "style.css", "notes.js", "grid.js", "keys.js"):
         text = (UI_DIR / name).read_text(encoding="utf-8")
         assert not vietnamese.search(text), f"{name} holds Vietnamese text; move it to labels_ui_vi.yaml"
         urls = [u for u in re.findall(r"https?://[A-Za-z0-9][^\s'\"]*", text) if u != "http://www.w3.org/2000/svg"]
@@ -612,7 +612,7 @@ def test_tree_js_is_pure_svg_and_fits_360(tmp_path: Path) -> None:
     js = (UI_DIR / "tree.js").read_text(encoding="utf-8")
     assert "createElementNS" in js and "const W = 340" in js  # drawn in a 340 unit wide viewBox
     css = (UI_DIR / "style.css").read_text(encoding="utf-8")
-    assert "--panel-w: 360px" in css and "--strip-w" in css
+    assert "--p1w: 280px" in css and "--strip-w" in css and ".tree-wide { min-width: 360px; }" in css  # F1 diagram
 
 
 # ---- acceptance test 15: only the Teable host is contacted --------------------
@@ -688,7 +688,7 @@ def test_ui_javascript_parses_when_node_is_available() -> None:
         pytest.skip("node is not installed; the JavaScript was not syntax-checked")
     import subprocess
 
-    for name in ("app.js", "tree.js"):
+    for name in ("app.js", "tree.js", "notes.js", "grid.js", "keys.js"):
         result = subprocess.run([node, "--check", str(UI_DIR / name)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
 
@@ -779,13 +779,15 @@ def test_window_failure_falls_back_to_the_browser(tmp_path: Path, monkeypatch: p
     assert main_mod.run_app(False) == 0 and opened
 
 
-def test_dialogs_never_cover_the_decision_tree_panel() -> None:
-    """The panel stays on top: the overlay stops at the panel edge for every panel width."""
+def test_pane_1_can_be_narrowed_to_a_strip_but_never_closed() -> None:
+    """Requirements 6: the decision tree can be narrowed to a strip, never closed, and F1 widens it."""
     css = (UI_DIR / "style.css").read_text(encoding="utf-8")
-    assert "#modal-root .overlay { position: fixed; inset: 0 var(--panel-w) 0 0;" in css
-    assert 'data-panel="strip"]) #modal-root .overlay { right: var(--strip-w); }' in css
-    assert 'data-panel="wide"]) #modal-root .overlay { right: 560px; }' in css
-    assert re.search(r"#panel \{ z-index: 4\d;", css)
+    html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+    assert '#shell[data-panel="strip"] { grid-template-columns: var(--strip-w)' in css  # a strip, not zero width
+    assert re.search(r'#shell\[data-panel="strip"\] #panel-strip \{ display: block', css)
+    assert not re.search(r"#pane1\s*\{[^}]*display:\s*none", css)
+    assert 'id="panel-strip"' in html and 'id="panel-toggle"' in html and 'id="panel-wide"' in html
+    assert "id: 'tree_wide'" in (UI_DIR / "keys.js").read_text(encoding="utf-8")  # F1 widens it again
 
 
 def test_trees_payload_carries_help_and_glossary(env: Env) -> None:
@@ -794,7 +796,7 @@ def test_trees_payload_carries_help_and_glossary(env: Env) -> None:
     assert data["trees"]["system_design"]["questions"][5]["help"]
     assert any(g["term"] == "Giá trị phân bổ" for g in data["guide"])
     js = (UI_DIR / "app.js").read_text(encoding="utf-8")
-    assert "drawHelp" in js and 'id="tree-help"' in (UI_DIR / "index.html").read_text(encoding="utf-8")
+    assert "drawChecklist" in js and 'id="tree-help"' in (UI_DIR / "index.html").read_text(encoding="utf-8")
 
 
 # ---- weekly review (docs/designs/review-first-pilot.md) ----------------------------
@@ -1072,3 +1074,17 @@ def test_state_counts_drafts_that_still_have_issues(loaded: Env) -> None:
     loaded.draft("yeu_cau", {"ma_yc": "R9", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"})
     state = loaded.get("/api/state")
     assert state["drafts"] == 2 and state["invalid_drafts"] == 1
+
+
+def test_partial_flag_changes_nothing_for_a_complete_draft(loaded: Env) -> None:
+    fields = {"ma_yc": "R9", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"}
+    a = loaded.draft("yeu_cau", fields)[1]["draft"]
+    loaded.post("/api/draft/discard", {"draft_id": a["id"]})
+    b = loaded.draft("yeu_cau", fields, partial=True)[1]["draft"]
+    assert (a["fields"], a["valid"], a["issues"], a["op"]) == (b["fields"], b["valid"], b["issues"], b["op"])
+
+
+def test_rows_carry_code_to_name_maps_for_every_reference(loaded: Env) -> None:
+    names = loaded.get("/api/rows", table="thong_so")["names"]
+    assert names["yeu_cau"]["R1"] == "Độ nhạy" and names["nut"]["N1.1"] == "Hydrophone"
+    assert {"nut", "yeu_cau", "ung_vien", "thong_so", "kien_truc", "moc"} <= set(names)
