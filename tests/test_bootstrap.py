@@ -25,9 +25,9 @@ def schema_tables(fake: FakeTeable) -> list[str]:
 # ---- acceptance test 1 -------------------------------------------------------
 
 
-def test_bootstrap_creates_fourteen_tables_on_empty_base(fake_teable, bootstrapped, schema):
+def test_bootstrap_creates_fifteen_tables_on_empty_base(fake_teable, bootstrapped, schema):
     report = bootstrapped["report"]
-    assert len(schema_tables(fake_teable)) == 14
+    assert len(schema_tables(fake_teable)) == 15
     assert sorted(schema_tables(fake_teable)) == sorted(schema["tables"])
     assert sorted(report.created_tables) == sorted(schema["tables"])
     assert set(bootstrapped["table_ids"]) == set(schema["tables"])
@@ -247,7 +247,7 @@ def test_cli_bootstrap_runs_end_to_end(fake_teable, tmp_path: Path, capsys, monk
     text = capsys.readouterr().out
     assert code == 0, text
     assert "cli-secret-token" not in text and "cli-secret-token" not in out.read_text(encoding="utf-8")
-    assert len(json.loads(out.read_text(encoding="utf-8"))["table_ids"]) == 14
+    assert len(json.loads(out.read_text(encoding="utf-8"))["table_ids"]) == 15
     assert cli_main(["bootstrap", "--url", fake_teable.url, "--base-id", "bseCLI"]) == 0
 
 

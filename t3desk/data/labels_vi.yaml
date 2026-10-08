@@ -16,6 +16,7 @@ tables:
   cai_dat: "Cài đặt"
   rfq: "RFQ / RFP"
   cong_viec: "Công việc"
+  ghi_chu: "Ghi chú"
 
 system_fields:
   auto_number: "Số thứ tự"
@@ -46,6 +47,11 @@ fields:
   diem_nguon_hang: "Điểm nguồn hàng (1-5)"
   diem_thoi_gian: "Điểm thời gian (1-5)"
   ly_do: "Lý do"
+  ma_gc: "Mã ghi chú"
+  bang: "Bảng"
+  ma_ban_ghi: "Mã bản ghi"
+  nguoi_viet: "Người viết"
+  noi_dung: "Nội dung"
   ma_nut: "Mã nút"
   ma_cha: "Mã nút cha"
   chuc_nang: "Chức năng"

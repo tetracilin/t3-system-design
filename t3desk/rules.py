@@ -22,7 +22,7 @@ import yaml
 DATA_DIR = Path(__file__).parent / "data"
 TABLES = (
     "yeu_cau", "kien_truc", "nut", "phan_bo", "thong_so", "ung_vien", "doi_chieu",
-    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec",
+    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec", "ghi_chu",
 )
 
 

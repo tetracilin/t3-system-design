@@ -246,6 +246,18 @@ tables:
       ma_ngoai: {type: text}      # owned by Paperclip TODO AI; T3 Desk never writes it
       dong_bo_luc: {type: date}   # owned by Paperclip TODO AI; T3 Desk never writes it
 
+  # Notes on any record (UI v2). Markdown text; the author is the app user; retired with Hủy, never deleted.
+  ghi_chu:
+    id_field: ma_gc
+    id: {kind: number, prefix: "GC-", pad: 3, pattern: '^GC-\d{3,}$', example: GC-001}
+    fields:
+      ma_gc: {type: text, unique: true, notNull: true, required: true}
+      bang: {type: text, required: true}
+      ma_ban_ghi: {type: text, required: true}
+      nguoi_viet: {type: text, required: true}
+      noi_dung: {type: longtext, required: true}
+      trang_thai: {type: choice, required: true, default: "Mở", choices: ["Mở", "Đã sửa", "Hủy"]}
+
 # Rows written to cai_dat by bootstrap if the key is missing (never overwritten).
 # "$project_name" is replaced by the project name given to bootstrap.
 # Exchange rates are VND per ONE unit of the currency (1 EUR = 27000 VND); rules.py converts

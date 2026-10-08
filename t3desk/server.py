@@ -74,6 +74,10 @@ REVIEW_CYCLE_KEY = "chu_ky_ra_soat_ngay"
 REVIEW_CYCLE_DEFAULT = 7
 REVIEW_SKIP_TABLES = ("cai_dat", "cong_viec")  # not reviewed: settings and the app's own task rows
 CHANGE_CARD_RETIRE_ROLES = (SYSTEM_DESIGNER, "pm")  # who may set a change card or finding to Hủy
+NOTES_TABLE = "ghi_chu"
+NOTE_EDITED = "Đã sửa"  # stored value of ghi_chu.trang_thai after the author changes the text
+# A draft with these problems cannot even be kept as a half-filled row; every other problem can.
+HARD_ISSUE_CODES = ("unknown_field", "id_format", "id_immutable")
 GATE_OFF = "Không"  # stored value of an open gate (schema data value, not UI text)
 WEIGHT_KEYS = ("trong_so_ky_thuat", "trong_so_nguon_hang", "trong_so_thoi_gian")
 SCORE_FIELDS = ("diem_ky_thuat", "diem_nguon_hang", "diem_thoi_gian")
@@ -320,6 +324,8 @@ class App:
             "progress": dict(self.progress),
             "default_screen": ROLE_SCREEN.get(self.role, "khoi_tao") if self.user and self.role else "khoi_tao",
             "tree": ROLE_TREE.get(self.role, "system_design"),
+            "menu_counts": self.menu_counts(self.analysis()),
+            "invalid_drafts": self.count_invalid_drafts(),
         }
 
     # ---- settings, connection test, bootstrap, refresh ---------------------
@@ -434,6 +440,8 @@ class App:
         if table == "mua_hang":
             deadline = a.order_by(_s(row.get("ma_uv")))
             return {"order_by": deadline.isoformat() if deadline else ""}
+        if table == "kien_truc":
+            return {"weighted": self.arch_weighted(a, row)}
         return {}
 
     def rows(self, query: dict[str, str], body: Any) -> dict[str, Any]:
@@ -442,6 +450,9 @@ class App:
         a = self.analysis()
         id_name = self.id_names[table]
         out: list[dict[str, Any]] = []
+        drafts = {d.id: d for d in self.store.list_drafts(table)}
+        known = self.known_ids() if drafts else {}
+        note_counts = self.note_counts(a, table)
         for row in a.t[table]:
             row_node = self.node_of(table, row, a)
             if node and not (row_node == node or row_node.startswith(node + ".") or
@@ -463,6 +474,8 @@ class App:
                 "owner": self.owner_for(table, row, row_node, a),
                 "warnings": [w.text for w in a.warnings_for(table, key)],
                 "extras": self.extras(table, row, a),
+                "issues": self.row_issues(drafts.get(row.get("_draft")), known),
+                "notes": note_counts.get(key, 0),
             })
         out.sort(key=lambda r: natural_key(r["key"]))
         return {
@@ -472,6 +485,21 @@ class App:
             "owners": sorted({_s(r.get("phu_trach")) for r in a.t["nut"] if _s(r.get("phu_trach"))}),
             "nodes": sorted(a.nodes, key=natural_key),
         }
+
+    def row_issues(self, draft: Draft | None, known: dict[str, set[str]]) -> list[dict[str, str]]:
+        """What still blocks a draft row from Commit (empty for a committed row)."""
+        if draft is None:
+            return []
+        return self.issues_payload(validation.validate_draft(self.schema, draft, known))
+
+    @staticmethod
+    def note_counts(a: rules.Analysis, table: str) -> dict[str, int]:
+        """Open notes per record of one table (retired notes do not count)."""
+        counts: dict[str, int] = {}
+        for n in a.t[NOTES_TABLE]:
+            if _s(n.get("bang")) == table and _s(n.get("trang_thai")) != rules.V.CANCELLED:
+                counts[_s(n.get("ma_ban_ghi"))] = counts.get(_s(n.get("ma_ban_ghi")), 0) + 1
+        return counts
 
     def names(self, a: rules.Analysis) -> dict[str, dict[str, str]]:
         """code -> short name for every table a code can point at, so the UI shows "N1 - Propulsion"."""
@@ -539,6 +567,16 @@ class App:
                 403, "role_required", f"{table} {key}: only the System designer or the PM may cancel a finding",
                 table=table, key=key,
             )
+        if table == NOTES_TABLE:
+            self.check_note_author(key, fields)
+
+    def check_note_author(self, key: str, fields: dict[str, Any]) -> None:
+        """Notes belong to their author: only the author writes, edits or retires one."""
+        committed = next((flatten(r) for r in self.store.cache_records(NOTES_TABLE)
+                          if _s(flatten(r).get("ma_gc")) == key), None)
+        author = _s(committed.get("nguoi_viet")) if committed else _s(fields.get("nguoi_viet"))
+        if author and author != self.user:
+            raise ApiError(403, "author_only", f"note {key} belongs to {author}", table=NOTES_TABLE, key=key)
 
     def issues_payload(self, issues: list[validation.Issue]) -> list[dict[str, str]]:
         return [dataclasses.asdict(i) for i in issues]
@@ -557,6 +595,8 @@ class App:
         else:
             fields = {k: v for k, v in raw_fields.items() if v is not None and v != ""}
         key = _s(body.get("key")) or _s(fields.get(id_name)) or (existing.key if existing else "")
+        if table == NOTES_TABLE:
+            self.prepare_note(op, key, fields)
         self.check_role_for(table, key, fields)
 
         if existing is not None and existing.op == "create" and _s(body.get("op")) == "update":
@@ -577,7 +617,9 @@ class App:
             if clash:
                 raise ApiError(409, "duplicate_draft", f"{key} is already in your drafts", key=key)
         issues = validation.validate_record(self.schema, table, merged, known_ids=known, op=op, key=key)
-        if issues:
+        partial = bool(body.get("partial"))  # the grid keeps a half-filled row as a draft with its issues
+        hard = [i for i in issues if i.code in HARD_ISSUE_CODES or (i.code == "required" and i.field == id_name)]
+        if issues and (not partial or hard):
             raise ApiError(422, "invalid", "; ".join(i.message for i in issues), issues=self.issues_payload(issues))
         if existing is not None:
             saved = self.store.update_draft(existing.id, fields=merged, key=key)
@@ -592,6 +634,16 @@ class App:
             "draft": self.draft_payload(saved, known), "drafts": self.store.count_drafts(),
             "warnings": self.row_warnings(table, key, merged),
         }
+
+    def prepare_note(self, op: str, key: str, fields: dict[str, Any]) -> None:
+        """A new note is written by the current user; a changed text marks the note as edited."""
+        if op == "create":
+            fields.setdefault("nguoi_viet", self.user)
+            fields.setdefault("trang_thai", rules.V.CHANGE_OPEN)  # the same stored value as an open change card
+            return
+        committed = any(_s(flatten(r).get("ma_gc")) == key for r in self.store.cache_records(NOTES_TABLE))
+        if committed and "noi_dung" in fields and "trang_thai" not in fields:
+            fields["trang_thai"] = NOTE_EDITED
 
     def row_warnings(self, table: str, key: str, fields: dict[str, Any]) -> list[dict[str, Any]]:
         """Rule warnings that touch a just-saved row: its own, and those of its node (e.g. 'too early')."""
@@ -736,6 +788,142 @@ class App:
             "total_warnings": len(a.warnings()),
         }
 
+    # ---- UI v2: notes, context pane, assistant, menu counts (docs/UI-V2-SPEC.md) --------
+
+    def notes(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Notes of one record, oldest first; retired (Hủy) notes are hidden unless all=1."""
+        table, key = self.require_table(query.get("table", "")), query.get("key", "")
+        a = self.analysis()
+        out = []
+        for n in a.t[NOTES_TABLE]:
+            if _s(n.get("bang")) != table or _s(n.get("ma_ban_ghi")) != key:
+                continue
+            status = _s(n.get("trang_thai"))
+            if status == rules.V.CANCELLED and query.get("all") != "1":
+                continue
+            out.append({
+                "key": _s(n.get("ma_gc")), "author": _s(n.get("nguoi_viet")), "text": _s(n.get("noi_dung")),
+                "status": status, "edited": status == NOTE_EDITED, "mine": _s(n.get("nguoi_viet")) == self.user,
+                "created": _s(n.get("_created")), "modified": _s(n.get("_modified")),
+                "draft": n.get("_draft"), "record_id": n.get("_record_id"),
+                "base": n.get("_base") or {k: v for k, v in n.items() if not k.startswith("_")},
+            })
+        out.sort(key=lambda x: natural_key(x["key"]))
+        return {"table": table, "key": key, "notes": out, "user": self.user}
+
+    def context(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """What pane 4 shows for the selected row: its source, links, warnings and how to fill it."""
+        table, key = self.require_table(query.get("table", "")), query.get("key", "")
+        a = self.analysis()
+        id_name = self.id_names[table]
+        row = next((r for r in a.t[table] if _s(r.get(id_name)) == key), None)
+        if row is None:
+            raise ApiError(404, "no_row", f"{table} {key} is not in the cache or your drafts")
+        label = (self.names(a).get(table) or {}).get(key)
+        blocks = self.context_blocks(table, key, row, a)
+        warnings = [w.text for w in a.warnings_for(table, key)]
+        if warnings:
+            blocks.append({"type": "warnings", "title_key": "ctx_row_warnings", "items": warnings})
+        blocks.append({"type": "help", "label_key": f"help_{table}"})
+        return {"table": table, "key": key, "title": f"{key} - {label}" if label else key, "blocks": blocks,
+                "names": self.names(a)}
+
+    def context_blocks(self, table: str, key: str, row: dict[str, Any], a: rules.Analysis) -> list[dict[str, Any]]:
+        def name(ref: str, code: str) -> str:
+            nm = (self.names(a).get(ref) or {}).get(code)
+            return f"{code} - {nm}" if nm else code
+
+        def kv(*pairs: tuple[str, Any]) -> dict[str, Any]:
+            return {"type": "kv", "title_key": "ctx_details",
+                    "items": [{"field": f, "value": v} for f, v in pairs if v not in (None, "")]}
+
+        def alloc_chips(node: str, yc: str = "") -> dict[str, Any]:
+            items = [{"text": f"{_s(p.get('ma_pb'))} {name('yeu_cau', _s(p.get('ma_yc')))} - {_s(p.get('kieu'))}"}
+                     for p in a.t["phan_bo"]
+                     if _s(p.get("ma_nut")) == node and (not yc or _s(p.get("ma_yc")) == yc)]
+            return {"type": "chips", "title_key": "ctx_allocations", "items": items}
+
+        node = self.node_of(table, row, a)
+        if table == "thong_so":
+            yc = _s(row.get("ma_yc_goc"))
+            req = next((r for r in a.t["yeu_cau"] if _s(r.get("ma_yc")) == yc), {})
+            unit = _s(row.get("don_vi"))
+            checks = []
+            for c in a.t["doi_chieu"]:
+                uv, ts = a._check_pair(c)
+                if ts != key:
+                    continue
+                state = a.check_state(uv, ts)
+                mark = {"pass": "✓", "fail": "✗"}.get(state, "?")
+                value = _s(c.get("gia_tri_so"))
+                checks.append({"text": f"{uv} {mark} {value} {unit}".strip(), "bad": state == "fail"})
+            return [
+                kv(("ma_yc_goc", name("yeu_cau", yc) if yc and yc != rules.V.DERIVED else yc),
+                   ("tieu_chi_nghiem_thu", _s(req.get("tieu_chi_nghiem_thu"))), ("ma_nut", name("nut", node))),
+                alloc_chips(node, yc if yc != rules.V.DERIVED else ""),
+                {"type": "chips", "title_key": "ctx_checked", "items": checks},
+            ]
+        if table == "yeu_cau":
+            nodes = [{"text": f"{name('nut', _s(p.get('ma_nut')))} - {_s(p.get('kieu'))}"}
+                     for p in a.t["phan_bo"] if _s(p.get("ma_yc")) == key]
+            return [kv(("mo_ta", _s(row.get("mo_ta"))), ("muc", _s(row.get("muc"))),
+                       ("tieu_chi_nghiem_thu", _s(row.get("tieu_chi_nghiem_thu")))),
+                    {"type": "chips", "title_key": "ctx_allocated_to", "items": nodes}]
+        if table == "nut":
+            nxt = a.next_action(key).text if a.is_leaf(key) else a.progress_text(key)
+            return [kv(("chuc_nang", _s(row.get("chuc_nang"))), ("loai", _s(row.get("loai"))),
+                       ("phu_trach", _s(row.get("phu_trach")))),
+                    {"type": "text", "title_key": "ctx_next", "text": nxt}, alloc_chips(key)]
+        if table == "ung_vien":
+            price = a.price_used(key)
+            checks = [{"text": f"{a._check_pair(c)[1]} {({'pass': '✓', 'fail': '✗'}).get(a.check_state(*a._check_pair(c)), '?')}",
+                       "bad": a.check_state(*a._check_pair(c)) == "fail"}
+                      for c in a.t["doi_chieu"] if a._check_pair(c)[0] == key]
+            return [kv(("hang", _s(row.get("hang"))), ("model", _s(row.get("model"))),
+                       ("ma_nut", name("nut", node))),
+                    {"type": "text", "title_key": "ctx_result", "text": a.result_text(key)
+                     + ("" if price is None else f" - {round(price, 3)}")},
+                    {"type": "chips", "title_key": "ctx_checks", "items": checks}]
+        if table == "phan_bo":
+            total = a.budget_totals().get(_s(row.get("ma_yc")))
+            text = "" if total is None else f"{round(total.total, 3)} / {total.limit}"
+            return [kv(("ma_yc", name("yeu_cau", _s(row.get("ma_yc")))), ("ma_nut", name("nut", node)),
+                       ("kieu", _s(row.get("kieu"))), ("gia_tri_phan_bo", row.get("gia_tri_phan_bo"))),
+                    {"type": "text", "title_key": "ctx_budget", "text": text}]
+        first = [(f, v) for f, v in row.items() if not f.startswith("_") and f != self.id_names[table]][:6]
+        return [kv(*first)]
+
+    def assistant(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Hermes assistant (spec section 7). A placeholder: no plugin supplies actions yet, so it is off."""
+        return {"enabled": False, "actions": [], "host": None, "context": query.get("context", "")}
+
+    def count_invalid_drafts(self) -> int:
+        known = self.known_ids()
+        return sum(1 for d in self.store.list_drafts() if validation.validate_draft(self.schema, d, known))
+
+    def menu_counts(self, a: rules.Analysis) -> dict[str, dict[str, Any]]:
+        """The number beside each screen in the menu, and whether it should be shown in red."""
+        def warned(*tables: str) -> bool:
+            return any(w.table in tables for w in a.warnings())
+
+        total = len(a.warnings())
+        findings = len(self.open_findings(a))
+        queue = len(a.sourcing_queue())
+        return {
+            "khoi_tao": {"n": 0, "red": False},
+            "tong_quan": {"n": total, "red": total > 0},
+            "ra_soat": {"n": findings, "red": False},
+            "yeu_cau": {"n": len(a.t["yeu_cau"]), "red": warned("yeu_cau")},
+            "kien_truc": {"n": len(a.t["kien_truc"]), "red": warned("kien_truc")},
+            "cay": {"n": len(a.nodes), "red": warned("nut")},
+            "phan_bo": {"n": len(a.t["phan_bo"]), "red": warned("phan_bo")},
+            "nut": {"n": len(a.leaves), "red": warned("thong_so", "ung_vien", "doi_chieu")},
+            "mua_hang": {"n": queue, "red": queue > 0},
+            "rfq": {"n": len(a.t["rfq"]), "red": False},
+            "moc": {"n": len(a.t["moc"]) + len(a.t["quyet_dinh"]), "red": False},
+            "commit": {"n": self.store.count_drafts(), "red": False},
+        }
+
     # ---- weekly review (docs/designs/review-first-pilot.md) -----------------------
 
     @staticmethod
@@ -823,11 +1011,19 @@ class App:
             request["draft_id"] = pending.id
         return self.save_draft({}, request)
 
+    @staticmethod
+    def arch_weights(a: rules.Analysis) -> list[float]:
+        weights = [rules._num(a.settings.get(k)) or 0.0 for k in WEIGHT_KEYS]
+        return weights if any(w > 0 for w in weights) else [1.0, 1.0, 1.0]  # no weights set yet: score equally
+
+    def arch_weighted(self, a: rules.Analysis, row: dict[str, Any]) -> float | None:
+        scores = [rules._num(row.get(f)) for f in SCORE_FIELDS]
+        used = [(s, w) for s, w in zip(scores, self.arch_weights(a)) if s is not None and w > 0]
+        return round(sum(s * w for s, w in used) / sum(w for _, w in used), 2) if used else None
+
     def architectures(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         a = self.analysis()
-        weights = [rules._num(a.settings.get(k)) or 0.0 for k in WEIGHT_KEYS]
-        if not any(w > 0 for w in weights):
-            weights = [1.0, 1.0, 1.0]  # no weights set yet: score the three criteria equally
+        weights = self.arch_weights(a)
         cards = []
         for row in sorted(a.t["kien_truc"], key=lambda r: _s(r.get("ma_kt"))):
             scores = [rules._num(row.get(f)) for f in SCORE_FIELDS]
@@ -862,6 +1058,7 @@ class App:
                 "cost": round(a.node_cost(code), 3), "draft": row.get("_draft"),
                 "record_id": row.get("_record_id"), "modified": row.get("_modified"),
                 "warnings": [w.text for w in a.warnings_for("nut", code)],
+                "active": code not in a.inactive, "dot": self.node_dot(a, code, leaf),
             })
             for child in sorted(a.children.get(code, []), key=natural_key):
                 walk(child, depth + 1)
@@ -872,6 +1069,18 @@ class App:
             walk(code, 0)
         gates = {k: a.gate(int(k[-1])) for k in GATE_KEYS}
         return {"names": self.names(a), "nodes": out, "gates": gates, "can_gate": self.role == SYSTEM_DESIGNER}
+
+    @staticmethod
+    def node_dot(a: rules.Analysis, code: str, leaf: bool) -> str:
+        """Status colour of a leaf in the chart: g done, r waiting or stuck, y in progress; others have none."""
+        if not leaf or code in a.inactive:
+            return ""
+        row = a.next_action(code).row
+        if row == 5:
+            return "g"
+        if row in (6, 9, 10) or a.warnings_for("nut", code):
+            return "r"
+        return "y"
 
     def alloc_matrix(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         a = self.analysis()
@@ -973,6 +1182,9 @@ class App:
             ("GET", "/api/trees"): self.trees_payload,
             ("POST", "/api/trees/reload"): self.reload_trees,
             ("GET", "/api/overview"): self.overview,
+            ("GET", "/api/notes"): self.notes,
+            ("GET", "/api/context"): self.context,
+            ("GET", "/api/assistant"): self.assistant,
             ("GET", "/api/review"): self.review,
             ("POST", "/api/review/end"): self.end_review,
             ("GET", "/api/architectures"): self.architectures,

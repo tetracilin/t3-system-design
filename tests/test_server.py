@@ -212,7 +212,7 @@ def test_bootstrap_through_the_api_opens_a_project(tmp_path: Path, fake_teable: 
         app.dispatch("POST", "/api/settings", {}, {"teable_url": fake_teable.url, "token": "alice", "user": "an", "role": "pm"})
         status, data = app.dispatch("POST", "/api/bootstrap", {}, {"project_name": "Demo", "space_id": "spc1"})
         assert status == 200, data
-        assert len(data["table_ids"]) == 14
+        assert len(data["table_ids"]) == 15
         state = app.dispatch("GET", "/api/state", {}, None)[1]
         assert state["has_project"] and state["project"] == "Demo"
         assert app.dispatch("POST", "/api/bootstrap", {}, {})[1]["error"]["code"] == "need_base_or_name"
@@ -913,3 +913,162 @@ def test_finding_without_a_node_saves(loaded: Env) -> None:
     status, data = loaded.draft("sai_lech", {"ma_sl": "SL-001", "mo_ta": "[PĐ] [R1] Tiêu chí chưa đo được",
                                              "nguoi_nhan": "binh", "trang_thai": "Mở"})
     assert status == 200, data
+
+
+# ---- UI v2 backend (docs/UI-V2-SPEC.md) ---------------------------------------------
+
+
+NOTE = {"ma_gc": "GC-001", "bang": "thong_so", "ma_ban_ghi": "TS-001", "noi_dung": "Cần **kiểm tra** độ sâu"}
+
+
+def test_partial_draft_is_kept_with_its_issues_and_a_normal_one_is_refused(loaded: Env) -> None:
+    fields = {"ma_ts": "TS-050", "ma_nut": "N1.1"}  # the grid saves a new row as soon as its first cell is filled
+    status, data = loaded.draft("thong_so", fields)
+    assert status == 422 and loaded.app.store.count_drafts() == 0
+    status, data = loaded.draft("thong_so", fields, partial=True)
+    assert status == 200 and data["draft"]["valid"] is False and loaded.app.store.count_drafts() == 1
+    assert {"ma_yc_goc", "thong_so", "kieu", "muc"} <= {i["field"] for i in data["draft"]["issues"]}
+    # the next cell edit re-saves the same draft; when everything is filled the draft turns valid
+    full = {**fields, "ma_yc_goc": "R1", "thong_so": "x", "kieu": "Số", "gia_tri_min": 1, "muc": "Bắt buộc"}
+    status, data = loaded.draft("thong_so", full, partial=True, draft_id=data["draft"]["id"])
+    assert status == 200 and data["draft"]["valid"] is True and loaded.app.store.count_drafts() == 1
+
+
+def test_partial_draft_still_refuses_a_missing_id_and_unknown_fields(loaded: Env) -> None:
+    status, data = loaded.draft("thong_so", {"thong_so": "x"}, partial=True)
+    assert status == 422 and data["error"]["code"] == "invalid"
+    status, data = loaded.draft("thong_so", {"ma_ts": "TS-051", "ma_nut": "N1.1", "colour": "red"}, partial=True)
+    assert status == 422 and any(i["code"] == "unknown_field" for i in data["error"]["issues"])
+    assert loaded.app.store.count_drafts() == 0
+
+
+def test_commit_fails_an_invalid_partial_draft_and_sends_the_valid_ones(loaded: Env) -> None:
+    assert loaded.draft("thong_so", {"ma_ts": "TS-050", "ma_nut": "N1.1"}, partial=True)[0] == 200
+    assert loaded.draft("yeu_cau", {"ma_yc": "R9", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"})[0] == 200
+    status, data = loaded.post("/api/commit")
+    assert status == 200 and not data["ok"]
+    by_key = {r["key"]: r["status"] for r in data["results"]}
+    assert by_key == {"TS-050": "failed", "R9": "committed"}
+    assert loaded.app.store.count_drafts() == 1  # the failed draft stays for the user to finish
+
+
+def test_rows_carry_issues_of_a_draft_and_the_note_count(loaded: Env) -> None:
+    loaded.draft("thong_so", {"ma_ts": "TS-050", "ma_nut": "N1.1"}, partial=True)
+    loaded.draft("ghi_chu", NOTE)
+    rows = {r["key"]: r for r in loaded.get("/api/rows", table="thong_so")["rows"]}
+    assert rows["TS-050"]["issues"] and rows["TS-001"]["issues"] == []
+    assert rows["TS-001"]["notes"] == 1 and rows["TS-050"]["notes"] == 0
+
+
+def test_note_takes_the_current_user_as_author_and_is_listed_oldest_first(loaded: Env) -> None:
+    status, data = loaded.draft("ghi_chu", NOTE)
+    assert status == 200 and data["draft"]["fields"]["nguoi_viet"] == "an"
+    loaded.draft("ghi_chu", {**NOTE, "ma_gc": "GC-002", "noi_dung": "Hai"})
+    loaded.draft("ghi_chu", {**NOTE, "ma_gc": "GC-003", "ma_ban_ghi": "TS-002", "noi_dung": "Khác bản ghi"})
+    notes = loaded.get("/api/notes", table="thong_so", key="TS-001")["notes"]
+    assert [n["key"] for n in notes] == ["GC-001", "GC-002"]
+    assert notes[0]["author"] == "an" and notes[0]["mine"] is True and notes[0]["draft"] is not None
+    assert notes[0]["text"] == NOTE["noi_dung"] and notes[0]["status"] == "Mở"
+
+
+def test_note_for_someone_else_is_refused(loaded: Env) -> None:
+    status, data = loaded.draft("ghi_chu", {**NOTE, "nguoi_viet": "binh"})
+    assert status == 403 and data["error"]["code"] == "author_only"
+    assert loaded.app.store.count_drafts() == 0
+
+
+def test_only_the_author_edits_or_retires_a_note_and_an_edit_marks_it_edited(loaded: Env) -> None:
+    assert loaded.draft("ghi_chu", NOTE)[0] == 200
+    assert loaded.post("/api/commit")[0] == 200
+    row = next(r for r in loaded.get("/api/rows", table="ghi_chu")["rows"] if r["key"] == "GC-001")
+    edit = {"table": "ghi_chu", "op": "update", "key": "GC-001", "record_id": row["record_id"],
+            "base_modified": row["modified"], "base_fields": row["base"]}
+    status, data = loaded.post("/api/draft", {**edit, "fields": {"noi_dung": "Đã sửa nội dung"}})
+    assert status == 200 and data["draft"]["fields"]["trang_thai"] == "Đã sửa"
+    loaded.post("/api/commit")
+    loaded.set_identity("binh", "designer")
+    for fields in ({"noi_dung": "Của người khác"}, {"trang_thai": "Hủy"}):
+        status, data = loaded.post("/api/draft", {**edit, "fields": fields})
+        assert status == 403 and data["error"]["code"] == "author_only"
+    loaded.set_identity("an", "system_designer")
+    status, data = loaded.post("/api/draft", {**edit, "fields": {"trang_thai": "Hủy"}})
+    assert status == 200 and data["draft"]["fields"]["trang_thai"] == "Hủy"
+    loaded.post("/api/commit")
+    assert loaded.get("/api/notes", table="thong_so", key="TS-001")["notes"] == []  # retired: hidden, not deleted
+    assert len(loaded.fake.records("ghi_chu")) == 1
+
+
+def test_author_rule_is_rechecked_at_commit(loaded: Env) -> None:
+    assert loaded.draft("ghi_chu", NOTE)[0] == 200
+    loaded.set_identity("binh", "designer")
+    status, data = loaded.post("/api/commit")
+    assert status == 403 and data["error"]["code"] == "author_only"
+
+
+def test_two_users_taking_the_same_note_id_get_a_new_one(loaded: Env) -> None:
+    loaded.fake.seed("ghi_chu", {"ma_gc": "GC-001", "bang": "yeu_cau", "ma_ban_ghi": "R1", "nguoi_viet": "binh",
+                                 "noi_dung": "của binh", "trang_thai": "Mở"}, user="B")
+    assert loaded.draft("ghi_chu", NOTE)[0] == 200  # the cache does not know GC-001 yet
+    status, data = loaded.post("/api/commit")
+    conflict = next(r for r in data["results"] if r["key"] == "GC-001")
+    assert conflict["status"] == "conflict" and conflict["conflict"]["proposed_id"] == "GC-002"
+    assert loaded.fake.records("ghi_chu")[0]["fields"]["nguoi_viet"] == "binh"  # the first one is untouched
+
+
+def test_context_of_a_specification_names_its_requirement_allocation_and_checks(loaded: Env) -> None:
+    ctx = loaded.get("/api/context", table="thong_so", key="TS-001")
+    kinds = {b["type"] for b in ctx["blocks"]}
+    assert {"kv", "chips", "help"} <= kinds
+    text = json.dumps(ctx, ensure_ascii=False)
+    assert "R1 - Độ nhạy" in text  # a code is never shown alone
+    assert ctx["title"].startswith("TS-001")
+
+
+def test_context_of_any_table_has_a_title_and_help(loaded: Env) -> None:
+    for table, key in (("yeu_cau", "R1"), ("nut", "N1.1"), ("ung_vien", "UV-001"), ("kien_truc", "KT-A"), ("phan_bo", "PB-001")):
+        ctx = loaded.get("/api/context", table=table, key=key)
+        assert ctx["title"].startswith(key) and any(b["type"] == "help" for b in ctx["blocks"]), table
+    status, data = loaded.call("GET", "/api/context", {"table": "thong_so", "key": "TS-999"})
+    assert status == 404 and data["error"]["code"] == "no_row"
+
+
+def test_state_carries_menu_counts_for_the_screen_list(loaded: Env) -> None:
+    counts = loaded.get("/api/state")["menu_counts"]
+    assert counts["yeu_cau"]["n"] == 6 and counts["kien_truc"]["n"] == 2 and counts["cay"]["n"] == 10
+    assert counts["tong_quan"]["red"] is True  # the fixture has warnings
+    assert set(counts) >= {"tong_quan", "ra_soat", "yeu_cau", "kien_truc", "cay", "phan_bo", "nut", "mua_hang", "rfq", "moc", "commit"}
+    loaded.draft("yeu_cau", {"ma_yc": "R9", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"})
+    assert loaded.get("/api/state")["menu_counts"]["commit"]["n"] == 1
+
+
+def test_assistant_is_a_placeholder_without_a_plugin(loaded: Env) -> None:
+    data = loaded.get("/api/assistant", context="thong_so.row")
+    assert data["enabled"] is False and data["actions"] == [] and data["host"] is None
+    assert loaded.app.store.count_drafts() == 0  # asking changes nothing
+
+
+def test_chart_nodes_carry_a_status_dot_and_the_rejected_option_flag(loaded: Env) -> None:
+    nodes = {n["code"]: n for n in loaded.get("/api/tree_nodes")["nodes"]}
+    assert nodes["N1.1"]["dot"] == "g"       # the hydrophone leaf is done
+    assert nodes["N1.2"]["dot"] == "y"       # the digitiser is at step 3
+    assert nodes["N1"]["dot"] == "" and all(n["active"] is True for n in nodes.values())
+    rows = build()
+    rows["kien_truc"][0]["trang_thai"] = "Loại"  # KT-A rejected: the nodes tagged with it are not active
+    rows["nut"][4]["ma_kt"] = "KT-A"
+    loaded.load_cache(rows)
+    nodes = {n["code"]: n for n in loaded.get("/api/tree_nodes")["nodes"]}
+    assert nodes[rows["nut"][4]["ma_nut"]]["active"] is False
+
+
+def test_architecture_rows_carry_their_weighted_total(loaded: Env) -> None:
+    rows = {r["key"]: r for r in loaded.get("/api/rows", table="kien_truc")["rows"]}
+    cards = {c["key"]: c["weighted"] for c in loaded.get("/api/architectures")["cards"]}
+    assert rows["KT-A"]["extras"]["weighted"] == cards["KT-A"]
+
+
+def test_state_counts_drafts_that_still_have_issues(loaded: Env) -> None:
+    assert loaded.get("/api/state")["invalid_drafts"] == 0
+    loaded.draft("thong_so", {"ma_ts": "TS-050", "ma_nut": "N1.1"}, partial=True)
+    loaded.draft("yeu_cau", {"ma_yc": "R9", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"})
+    state = loaded.get("/api/state")
+    assert state["drafts"] == 2 and state["invalid_drafts"] == 1
