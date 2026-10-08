@@ -5,8 +5,8 @@ For the first session with one junior on one real project. About 90 minutes. The
 
 ## Before the session (reviewer, 15 minutes)
 
-1. Teable on the NAS is running. Run `t3desk bootstrap` on the pilot base (adds the `ghi_chu` table, `nut.ma_kt` and the
-   review-cycle setting). Do not run it against the real NAS until you are ready; it changes the base.
+1. Teable on the NAS is running. The pilot base `bseAYMV8qhuRRpromU8` was bootstrapped on 9 Oct 2026 (15 tables with `ghi_chu`,
+   `nut.ma_kt`, the review-cycle setting). A different base needs `t3desk bootstrap` first; it only adds what is missing.
 2. On the junior's Windows PC: `run.bat --browser` (or the window build). Khởi tạo: Teable address, the junior's own token,
    name, role Thiết kế hệ thống or Thiết kế nút, "Kiểm tra kết nối", then open the project.
 3. Fill in `STATUS.md` "Viet to fill in": junior, project, reviewer, date.

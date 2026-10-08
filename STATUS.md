@@ -19,12 +19,12 @@ Run the tests: `.\.venv\Scripts\python.exe -m pytest -o addopts="" -p no:cachepr
 
 ## Next
 
-- **Next (user test):** the weekly review (`docs/designs/review-first-pilot.md`) and UI v2 are both built. Before the first session: run `t3desk bootstrap` on the pilot base (adds `nut.ma_kt`, `ghi_chu`, `chu_ky_ra_soat_ngay`), then watch one named junior use it. Office hours (8 Oct) advised freezing UI v2 until after that session; Viet chose to build it first (9 Oct), so treat the layout as a guess to be tested.
+- **Next (user test):** the weekly review (`docs/designs/review-first-pilot.md`) and UI v2 are both built. The pilot base is already bootstrapped (see below); watch one named junior use it. Office hours (8 Oct) advised freezing UI v2 until after that session; Viet chose to build it first (9 Oct), so treat the layout as a guess to be tested.
 - **Viet to fill in:** pilot junior: ___ · project: ___ · reviewer: ___ · session 1 date: ___
 - Spec section 10 test 8 (tab through the four panes without a mouse, on Windows, macOS, Ubuntu) is manual and not done; so is running the UI inside the pywebview window.
 - Hermes: the panel is a placeholder. Enabling it needs plugin actions wired to screens (REQUIREMENTS 9.1) and the Hermes API details; the preview-payload test is a skipped placeholder in `tests/test_ui_static.py`.
 - Electron, Hyprland and Quickshell were requested but conflict with CLAUDE.md (stack fixed), requirements section 3 (Electron rejected), the 80 MB / 200 MB limits and Windows/macOS/Ubuntu support (Hyprland and Quickshell are Linux-only). Not started; needs an explicit decision.
-- Existing Teable bases need `t3desk bootstrap` run again to add the new `nut.ma_kt` column.
+- Bootstrap was re-run on the pilot base `bseAYMV8qhuRRpromU8` ("Test_Design_Sys", `https://teable.tecotec.tech:8443`) on 9 Oct 2026: it now has 15 tables (new `ghi_chu`), `nut.ma_kt` and the `chu_ky_ra_soat_ngay` default row; every ID field still has unique and notNull (read back from Teable). Any other base still needs the same re-run.
 - Decide: two chosen architectures give no warning (section 7 silent); nodes have no status to retire them; any role may set an architecture to `Loại`.
 - Plugins have no UI wiring (Settings page, buttons, preview dialog); the caller must call `host.start()`, `host.after_commit(report)`, `host.poll_jobs()` and supply the confirm hook.
 - Test 15 (socket patching, whole app) is not in the plugins area.
