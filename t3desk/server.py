@@ -22,7 +22,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -64,11 +64,16 @@ ROLE_SCREEN = {
     "sourcing": "mua_hang", "pm": "moc",
 }
 SCREENS = (
-    "khoi_tao", "tong_quan", "yeu_cau", "kien_truc", "cay", "phan_bo", "nut",
+    "khoi_tao", "tong_quan", "ra_soat", "yeu_cau", "kien_truc", "cay", "phan_bo", "nut",
     "mua_hang", "rfq", "moc", "commit",
 )
 # Restricted to the System designer (section 2): the two gates and choosing an architecture.
 GATE_KEYS = ("chot_cap_1", "chot_cap_2")
+REVIEW_KEY = "ngay_ra_soat_cuoi"  # cai_dat row: when the last weekly review ended (Teable's clock)
+REVIEW_CYCLE_KEY = "chu_ky_ra_soat_ngay"
+REVIEW_CYCLE_DEFAULT = 7
+REVIEW_SKIP_TABLES = ("cai_dat", "cong_viec")  # not reviewed: settings and the app's own task rows
+CHANGE_CARD_RETIRE_ROLES = (SYSTEM_DESIGNER, "pm")  # who may set a change card or finding to Hủy
 GATE_OFF = "Không"  # stored value of an open gate (schema data value, not UI text)
 WEIGHT_KEYS = ("trong_so_ky_thuat", "trong_so_nguon_hang", "trong_so_thoi_gian")
 SCORE_FIELDS = ("diem_ky_thuat", "diem_nguon_hang", "diem_thoi_gian")
@@ -517,12 +522,19 @@ class App:
     def check_role_for(self, table: str, key: str, fields: dict[str, Any]) -> None:
         """Gates and the chosen architecture are for the System designer only (section 2)."""
         restricted = (
-            (table == "cai_dat" and (key in GATE_KEYS or _s(fields.get("khoa")) in GATE_KEYS))
+            (table == "cai_dat" and (key in GATE_KEYS + (REVIEW_KEY,)
+                                     or _s(fields.get("khoa")) in GATE_KEYS + (REVIEW_KEY,)))
             or (table == "kien_truc" and fields.get("trang_thai") == rules.V.ARCH_CHOSEN)
         )
         if restricted and self.role != SYSTEM_DESIGNER:
             raise ApiError(
                 403, "role_required", f"{table} {key}: only the System designer may do this",
+                table=table, key=key,
+            )
+        retiring = table == "sai_lech" and fields.get("trang_thai") == rules.V.CANCELLED
+        if retiring and self.role not in CHANGE_CARD_RETIRE_ROLES:
+            raise ApiError(
+                403, "role_required", f"{table} {key}: only the System designer or the PM may cancel a finding",
                 table=table, key=key,
             )
 
@@ -574,7 +586,23 @@ class App:
                 key=key or None,
             )
         self._bump()
-        return {"draft": self.draft_payload(saved, known), "drafts": self.store.count_drafts()}
+        return {
+            "draft": self.draft_payload(saved, known), "drafts": self.store.count_drafts(),
+            "warnings": self.row_warnings(table, key, merged),
+        }
+
+    def row_warnings(self, table: str, key: str, fields: dict[str, Any]) -> list[dict[str, Any]]:
+        """Rule warnings that touch a just-saved row: its own, and those of its node (e.g. 'too early')."""
+        a = self.analysis()
+        node = self.node_of(table, fields, a)
+        return [
+            self.warning_payload(w) for w in a.warnings()
+            if (w.table == table and w.key == key) or (node and w.node == node)
+        ]
+
+    @staticmethod
+    def warning_payload(w: rules.Warn) -> dict[str, Any]:
+        return {"code": w.code, "table": w.table, "key": w.key, "text": w.text, "node": w.node, "owner": w.owner}
 
     def draft_payload(self, draft: Draft, known: dict[str, set[str]] | None = None) -> dict[str, Any]:
         issues = validation.validate_draft(self.schema, draft, known or self.known_ids())
@@ -702,8 +730,96 @@ class App:
             "counters": [{"name": n, "text": t, "value": v} for n, t, v in a.counters_labeled()],
             "warnings": warnings,
             "tasks": tasks,
+            "my_findings": [f for f in self.open_findings(a) if me and f["owner"] == me],
             "total_warnings": len(a.warnings()),
         }
+
+    # ---- weekly review (docs/designs/review-first-pilot.md) -----------------------
+
+    @staticmethod
+    def open_findings(a: rules.Analysis) -> list[dict[str, Any]]:
+        """Open change cards (review findings are change cards), oldest ID first."""
+        cards = [
+            {"key": _s(r.get("ma_sl")), "text": _s(r.get("mo_ta")), "node": _s(r.get("ma_nut")),
+             "owner": _s(r.get("nguoi_nhan")), "due": _s(r.get("han"))}
+            for r in a.t["sai_lech"] if _s(r.get("trang_thai")) in ("", rules.V.CHANGE_OPEN)
+        ]
+        return sorted(cards, key=lambda c: natural_key(c["key"]))
+
+    def review_cycle_days(self, a: rules.Analysis) -> int:
+        value = rules._num(a.settings.get(REVIEW_CYCLE_KEY))
+        return int(value) if value and value > 0 else REVIEW_CYCLE_DEFAULT
+
+    def review_since(self, a: rules.Analysis) -> str:
+        """The last review's end (Teable's clock), or one cycle back from today before the first review."""
+        last = _s(a.settings.get(REVIEW_KEY))
+        if last:
+            return last
+        return (self._today() - timedelta(days=self.review_cycle_days(a))).isoformat()
+
+    def committed_rows(self, a: rules.Analysis) -> list[tuple[str, dict[str, Any]]]:
+        """Rows that exist in Teable (they carry its lastModifiedTime), in review order."""
+        return [
+            (table, row) for table in rules.TABLES if table not in REVIEW_SKIP_TABLES
+            for row in a.t[table] if _s(row.get("_modified"))
+        ]
+
+    def review(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """The weekly review: per owner, then per leaf; plus the system group (rows with no owner)."""
+        a = self.analysis()
+        since = self.review_since(a)
+        groups: dict[str, dict[str, Any]] = {"": self.review_group("")}
+        for code in sorted(a.leaves, key=natural_key):
+            owner = a.owner_of(code) or ""
+            groups.setdefault(owner, self.review_group(owner))["leaves"].append(
+                {"code": code, "name": _s(a.nodes[code].get("ten")), "next": a.next_action(code).text,
+                 "row": a.next_action(code).row})
+        for w in a.warnings():
+            groups.setdefault(w.owner or "", self.review_group(w.owner or ""))["warnings"].append(
+                self.warning_payload(w))
+        id_names = self.id_names
+        for table, row in self.committed_rows(a):
+            if _s(row.get("_modified")) <= since:
+                continue
+            owner = self.owner_for(table, row, self.node_of(table, row, a), a)
+            groups.setdefault(owner, self.review_group(owner))["changed"].append(
+                {"table": table, "key": _s(row.get(id_names.get(table, ""))),
+                 "node": self.node_of(table, row, a), "modified": _s(row.get("_modified"))})
+        ordered = [groups[""]] + [groups[o] for o in sorted(groups) if o]
+        return {
+            "groups": ordered,
+            "counters": [{"name": n, "text": t, "value": v} for n, t, v in a.counters_labeled()],
+            "findings": self.open_findings(a),
+            "since": since,
+            "cycle_days": self.review_cycle_days(a),
+        }
+
+    @staticmethod
+    def review_group(owner: str) -> dict[str, Any]:
+        return {"owner": owner, "leaves": [], "warnings": [], "changed": []}
+
+    def end_review(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Close the review: refresh, then stamp the newest change seen (Teable's clock, never the laptop's)."""
+        if self.role != SYSTEM_DESIGNER:
+            raise ApiError(403, "role_required", "only the System designer may end a review")
+        self.refresh(query, body)  # offline raises 503 here, so no draft is made
+        a = self.analysis()
+        newest = max((_s(r.get("_modified")) for _, r in self.committed_rows(a)), default="")
+        if not newest:
+            raise ApiError(409, "nothing_to_review", "no committed rows in the cache; refresh and try again")
+        existing = next((r for r in a.t["cai_dat"] if _s(r.get("khoa")) == REVIEW_KEY), None)
+        pending = next((d for d in self.store.list_drafts("cai_dat") if d.key == REVIEW_KEY), None)
+        if existing is not None and existing.get("_record_id"):
+            request: dict[str, Any] = {
+                "table": "cai_dat", "op": "update", "key": REVIEW_KEY, "record_id": existing["_record_id"],
+                "base_modified": existing.get("_modified"), "base_fields": {"gia_tri": _s(existing.get("gia_tri"))},
+                "fields": {"gia_tri": newest},
+            }
+        else:
+            request = {"table": "cai_dat", "op": "create", "fields": {"khoa": REVIEW_KEY, "gia_tri": newest}}
+        if pending is not None:
+            request["draft_id"] = pending.id
+        return self.save_draft({}, request)
 
     def architectures(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         a = self.analysis()
@@ -855,6 +971,8 @@ class App:
             ("GET", "/api/trees"): self.trees_payload,
             ("POST", "/api/trees/reload"): self.reload_trees,
             ("GET", "/api/overview"): self.overview,
+            ("GET", "/api/review"): self.review,
+            ("POST", "/api/review/end"): self.end_review,
             ("GET", "/api/architectures"): self.architectures,
             ("GET", "/api/tree_nodes"): self.tree_nodes,
             ("GET", "/api/alloc"): self.alloc_matrix,

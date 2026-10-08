@@ -151,6 +151,8 @@ settings_keys:
   trong_so_thoi_gian: "Trọng số thời gian"
   vnd_per_usd: "1 USD = ? VND"
   vnd_per_eur: "1 EUR = ? VND"
+  chu_ky_ra_soat_ngay: "Chu kỳ rà soát (ngày)"
+  ngay_ra_soat_cuoi: "Lần rà soát gần nhất"
   # VND is always 1 (built in); old rows ty_gia_VND / ty_gia_USD / ty_gia_EUR are obsolete.
   vnd_per_vnd: "1 VND = ? VND (luôn là 1, không cần nhập)"
   ty_gia_VND: "Tỷ giá VND cũ (triệu đồng, không còn dùng)"

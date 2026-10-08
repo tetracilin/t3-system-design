@@ -28,6 +28,7 @@ ui:
   # navigation
   nav_khoi_tao: "Khởi tạo"
   nav_tong_quan: "Tổng quan"
+  nav_ra_soat: "Rà soát tuần"
   nav_yeu_cau: "Yêu cầu"
   nav_kien_truc: "Kiến trúc"
   nav_cay: "Cây hệ thống"
@@ -229,7 +230,8 @@ ui:
   err_need_base_or_name: "Nhập mã base hoặc tên dự án."
   err_bootstrap_failed: "Tạo dự án thất bại. Đọc thông báo bên dưới; không có gì bị xóa."
   err_duplicate_draft: "Mã này đã có trong bản nháp của bạn. Mở bản nháp đó để sửa hoặc chọn mã khác."
-  err_role_required: "Vai trò của bạn không được làm việc này. Chỉ Thiết kế hệ thống chốt cấp và chọn kiến trúc."
+  err_role_required: "Vai trò của bạn không được làm việc này. Chỉ Thiết kế hệ thống chốt cấp, chọn kiến trúc, kết thúc rà soát; chỉ Thiết kế hệ thống hoặc PM được hủy nhận xét."
+  err_nothing_to_review: "Chưa có dữ liệu đã commit để rà soát. Làm mới từ Teable rồi thử lại."
   err_commit_disabled: "Không commit được: Teable chưa trả lời. Bản nháp vẫn còn nguyên; thử lại khi kết nối trở lại."
   err_unique_flag_missing: "Một trường mã trên Teable mất cờ duy nhất nên commit bị từ chối. Báo quản trị chạy lại bootstrap."
   err_bad_new_id: "Mã mới không dùng được. Nhập mã khác đúng định dạng."

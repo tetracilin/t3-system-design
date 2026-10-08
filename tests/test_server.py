@@ -174,7 +174,7 @@ def test_ui_files_have_no_vietnamese_literals_and_no_external_urls() -> None:
 
 def test_meta_carries_schema_labels_and_screens(env: Env) -> None:
     meta = env.get("/api/meta")
-    assert set(meta["screens"]) == set(server.SCREENS) and len(meta["screens"]) == 11
+    assert set(meta["screens"]) == set(server.SCREENS) and len(meta["screens"]) == 12 and "ra_soat" in meta["screens"]
     assert "yeu_cau" in meta["schema"]["tables"] and meta["labels"]["ui"]["nav_commit"]
     assert meta["role_tree"]["designer"] == "designer"
 
@@ -261,6 +261,8 @@ def test_overview_lists_my_leaves_counters_and_warnings(loaded: Env) -> None:
     counters = {c["name"]: c["value"] for c in data["counters"]}
     assert counters["pairs_missing_spec"] == 1 and len(data["counters"]) == 7
     assert any(w["key"] == "PB-004" for w in data["warnings"])
+    # regression contract (eng review R8): the keys the UI reads stay, my_findings is added
+    assert {"leaves", "counters", "warnings", "tasks", "total_warnings", "my_findings"} <= set(data)
 
 
 # ---- drafts -------------------------------------------------------------------
@@ -269,6 +271,7 @@ def test_overview_lists_my_leaves_counters_and_warnings(loaded: Env) -> None:
 def test_save_draft_marks_the_row_and_counts(loaded: Env) -> None:
     status, data = loaded.draft("yeu_cau", {"ma_yc": "R7", "mo_ta": "Mới", "muc": "Bắt buộc", "trang_thai": "Nháp"})
     assert status == 200 and data["drafts"] == 1
+    assert {"draft", "drafts", "warnings"} <= set(data)  # R8: old keys kept, warnings added
     rows = {r["key"]: r for r in loaded.get("/api/rows", table="yeu_cau")["rows"]}
     assert rows["R7"]["draft"] and rows["R7"]["draft_op"] == "create" and rows["R1"]["draft"] is None
     assert loaded.get("/api/state")["drafts"] == 1
@@ -321,6 +324,13 @@ def test_only_system_designer_sets_gates_and_chooses_architecture(loaded: Env, r
     status, data = loaded.post("/api/draft", {"table": "kien_truc", "op": "update", "key": "KT-B", "record_id": "recX",
                                               "fields": {"trang_thai": "Chọn"}})
     assert status == 403
+    status, data = loaded.post("/api/review/end")
+    assert status == 403 and data["error"]["code"] == "role_required"
+    status, data = loaded.draft("cai_dat", {"khoa": "ngay_ra_soat_cuoi", "gia_tri": "2026-10-01T00:00:00.000Z"})
+    assert status == 403
+    if role != "pm":  # change cards belong to the PM too (REQUIREMENTS section 2)
+        status, data = loaded.draft("sai_lech", {"ma_sl": "SL-001", "mo_ta": "x", "nguoi_nhan": "an", "trang_thai": "Hủy"})
+        assert status == 403
     assert loaded.app.store.count_drafts() == 0
     # other cai_dat rows and other architecture states are open to everyone
     assert loaded.draft("kien_truc", {"ma_kt": "KT-C", "ten": "C", "trang_thai": "Đề xuất"})[0] == 200
@@ -785,3 +795,121 @@ def test_trees_payload_carries_help_and_glossary(env: Env) -> None:
     assert any(g["term"] == "Giá trị phân bổ" for g in data["guide"])
     js = (UI_DIR / "app.js").read_text(encoding="utf-8")
     assert "drawHelp" in js and 'id="tree-help"' in (UI_DIR / "index.html").read_text(encoding="utf-8")
+
+
+# ---- weekly review (docs/designs/review-first-pilot.md) ----------------------------
+
+
+def stamp(env: Env, table: str, modified: dict[str, str]) -> None:
+    """Give cached rows of one table their own lastModifiedTime, keyed by the row's ID value."""
+    id_name = env.app.id_names[table]
+    records = env.app.store.cache_records(table)
+    for r in records:
+        key = str(r["fields"].get(id_name, ""))
+        if key in modified:
+            r["lastModifiedTime"] = modified[key]
+    env.app.store.replace_cache(table, records)
+    env.app._bump()
+
+
+def set_setting(env: Env, key: str, value: str) -> None:
+    records = [r for r in env.app.store.cache_records("cai_dat") if r["fields"].get("khoa") != key]
+    records.append({"id": f"rec_{key}", "fields": {"khoa": key, "gia_tri": value},
+                    "lastModifiedTime": "2026-10-01T00:00:00.000Z", "createdTime": "2026-10-01T00:00:00.000Z"})
+    env.app.store.replace_cache("cai_dat", records)
+    env.app._bump()
+
+
+class _NoRefresh:
+    """A committer whose refresh keeps the cache as the test loaded it."""
+
+    def refresh_cache(self, progress: Any = None) -> None:
+        return None
+
+
+def test_review_groups_leaves_by_owner_and_has_a_system_group(loaded: Env) -> None:
+    data = loaded.get("/api/review")
+    groups = {g["owner"]: g for g in data["groups"]}
+    assert [x["code"] for x in groups["binh"]["leaves"]] == ["N1.2"]
+    assert "có 2, cần 3" in groups["binh"]["leaves"][0]["next"]
+    assert "" in groups  # the system group: rows with no node or no owner
+    assert len(data["counters"]) == 7 and data["findings"] == []
+
+
+def test_review_system_group_holds_requirement_warnings(loaded: Env) -> None:
+    rows = build()
+    rows["yeu_cau"][0]["tieu_chi_nghiem_thu"] = ""
+    loaded.load_cache(rows)
+    system = next(g for g in loaded.get("/api/review")["groups"] if g["owner"] == "")
+    assert any(w["key"] == "R1" and w["code"] == "req_no_criterion" for w in system["warnings"])
+
+
+def test_review_changed_since_uses_committed_modified_only(loaded: Env) -> None:
+    set_setting(loaded, "ngay_ra_soat_cuoi", "2026-10-03T00:00:00.000Z")
+    stamp(loaded, "thong_so", {"TS-001": "2026-10-04T08:00:00.000Z", "TS-002": "2026-10-02T08:00:00.000Z"})
+    assert loaded.draft("yeu_cau", {"ma_yc": "R7", "mo_ta": "Mới", "muc": "Mong muốn", "trang_thai": "Nháp"})[0] == 200
+    data = loaded.get("/api/review")
+    changed = {(c["table"], c["key"]): g["owner"] for g in data["groups"] for c in g["changed"]}
+    assert ("thong_so", "TS-001") in changed and ("thong_so", "TS-002") not in changed
+    assert ("yeu_cau", "R7") not in changed  # drafts are not reviewed
+    assert changed[("thong_so", "TS-001")] == "an"  # TS-001 is on N1.1, owned by an
+    assert data["since"] == "2026-10-03T00:00:00.000Z"
+
+
+def test_review_without_a_last_date_looks_back_one_cycle(loaded: Env) -> None:
+    data = loaded.get("/api/review")
+    assert data["since"].startswith("2026-09-28") and data["cycle_days"] == 7  # TODAY 2026-10-05 minus 7
+
+
+def test_end_review_stamps_the_newest_change_seen(loaded: Env) -> None:
+    stamp(loaded, "nut", {"N1.1": "2026-10-04T09:30:00.000Z"})
+    loaded.app.committer = lambda: _NoRefresh()
+    status, data = loaded.post("/api/review/end")
+    assert status == 200, data
+    assert data["draft"]["table"] == "cai_dat"
+    assert data["draft"]["fields"]["gia_tri"] == "2026-10-04T09:30:00.000Z"
+
+
+def test_end_review_offline_creates_no_draft(loaded: Env, fake_teable: FakeTeable) -> None:
+    fake_teable.stop()
+    status, data = loaded.post("/api/review/end")
+    assert status == 503 and data["error"]["code"] == "offline"
+    assert loaded.app.store.count_drafts() == 0
+
+
+def test_overview_lists_my_open_findings_only(loaded: Env) -> None:
+    rows = build()
+    rows["sai_lech"] = [
+        {"ma_sl": "SL-001", "mo_ta": "[PĐ] [R1] a", "nguoi_nhan": "binh", "trang_thai": "Mở", "han": "2026-10-12"},
+        {"ma_sl": "SL-002", "mo_ta": "b", "nguoi_nhan": "binh", "trang_thai": "Xong"},
+        {"ma_sl": "SL-003", "mo_ta": "c", "nguoi_nhan": "an", "trang_thai": "Mở"},
+    ]
+    loaded.load_cache(rows)
+    loaded.set_identity("binh", "designer")
+    mine = loaded.get("/api/overview")["my_findings"]
+    assert [f["key"] for f in mine] == ["SL-001"] and mine[0]["due"] == "2026-10-12"
+    assert {f["key"] for f in loaded.get("/api/review")["findings"]} == {"SL-001", "SL-003"}
+
+
+SPEC = {"ma_ts": "TS-009", "ma_nut": "N1.1", "ma_yc_goc": "R1", "thong_so": "x", "kieu": "Số",
+        "gia_tri_min": 1, "muc": "Bắt buộc"}
+
+
+def test_save_draft_returns_too_early_warning_before_gate_2(loaded: Env) -> None:
+    rows = build()
+    next(r for r in rows["cai_dat"] if r["khoa"] == "chot_cap_2")["gia_tri"] = "Không"
+    rows["thong_so"], rows["ung_vien"], rows["doi_chieu"] = [], [], []
+    loaded.load_cache(rows)
+    status, data = loaded.draft("thong_so", SPEC)
+    assert status == 200 and "tree_too_early" in {w["code"] for w in data["warnings"]}
+
+
+def test_save_draft_returns_no_too_early_warning_after_gate_2(loaded: Env) -> None:
+    status, data = loaded.draft("thong_so", SPEC)
+    assert status == 200 and "tree_too_early" not in {w["code"] for w in data["warnings"]}
+
+
+def test_finding_without_a_node_saves(loaded: Env) -> None:
+    status, data = loaded.draft("sai_lech", {"ma_sl": "SL-001", "mo_ta": "[PĐ] [R1] Tiêu chí chưa đo được",
+                                             "nguoi_nhan": "binh", "trang_thai": "Mở"})
+    assert status == 200, data

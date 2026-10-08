@@ -265,6 +265,7 @@ defaults:
     - {khoa: trong_so_thoi_gian, gia_tri: "0.2"}
     - {khoa: vnd_per_usd, gia_tri: "25000"}
     - {khoa: vnd_per_eur, gia_tri: "27000"}
+    - {khoa: chu_ky_ra_soat_ngay, gia_tri: "7"}
 
 # Exchange-rate settings in cai_dat: key = key_prefix + lower-case currency code, value = VND
 # per one unit. A rate below min_foreign for a currency other than base_currency is rejected
