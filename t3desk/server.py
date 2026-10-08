@@ -461,8 +461,24 @@ class App:
         return {
             "table": table, "id_field": id_name, "rows": out,
             "age": self.cache_age_seconds(),
+            "names": self.names(a),
             "owners": sorted({_s(r.get("phu_trach")) for r in a.t["nut"] if _s(r.get("phu_trach"))}),
             "nodes": sorted(a.nodes, key=natural_key),
+        }
+
+    def names(self, a: rules.Analysis) -> dict[str, dict[str, str]]:
+        """code -> short name for every table a code can point at, so the UI shows "N1 - Propulsion"."""
+        def build(table: str, label: Callable[[dict[str, Any]], str]) -> dict[str, str]:
+            id_name = self.id_names[table]
+            return {_s(r.get(id_name)): label(r)[:60] for r in a.t[table] if _s(r.get(id_name))}
+
+        return {
+            "nut": build("nut", lambda r: _s(r.get("ten"))),
+            "yeu_cau": build("yeu_cau", lambda r: _s(r.get("mo_ta"))),
+            "kien_truc": build("kien_truc", lambda r: _s(r.get("ten"))),
+            "thong_so": build("thong_so", lambda r: _s(r.get("thong_so"))),
+            "ung_vien": build("ung_vien", lambda r: f"{_s(r.get('hang'))} {_s(r.get('model'))}".strip()),
+            "moc": build("moc", lambda r: _s(r.get("ten"))),
         }
 
     def require_table(self, table: str) -> str:
@@ -646,14 +662,14 @@ class App:
                 "steps": [dataclasses.asdict(s) for s in result.steps],
                 "leaf": dataclasses.asdict(result.leaf) if result.leaf else None,
             }
-        return {"trees": out, "node": node or "", "first": ROLE_TREE.get(self.role, "system_design")}
+        return {"trees": out, "guide": self.tree_store.guide, "node": node or "", "first": ROLE_TREE.get(self.role, "system_design")}
 
     @staticmethod
     def question_payload(q: decision_tree.Question) -> dict[str, Any]:
         def branch(b: decision_tree.Branch | None) -> dict[str, Any] | None:
             return None if b is None else {"do": b.do, "screen": b.screen}
 
-        return {"index": q.index, "q": q.q, "check": q.check, "yes": branch(q.yes), "no": branch(q.no)}
+        return {"index": q.index, "q": q.q, "check": q.check, "yes": branch(q.yes), "no": branch(q.no), "help": q.help}
 
     def reload_trees(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         try:
@@ -737,7 +753,7 @@ class App:
         for code in sorted(a.nodes, key=natural_key):
             walk(code, 0)
         gates = {k: a.gate(int(k[-1])) for k in GATE_KEYS}
-        return {"nodes": out, "gates": gates, "can_gate": self.role == SYSTEM_DESIGNER}
+        return {"names": self.names(a), "nodes": out, "gates": gates, "can_gate": self.role == SYSTEM_DESIGNER}
 
     def alloc_matrix(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         a = self.analysis()
@@ -756,7 +772,7 @@ class App:
         reqs = [{"code": _s(r.get("ma_yc")), "text": _s(r.get("mo_ta")), "muc": _s(r.get("muc"))}
                 for r in sorted(a.t["yeu_cau"], key=lambda r: natural_key(_s(r.get("ma_yc"))))]
         return {"requirements": reqs, "nodes": [c for c in columns if c in a.nodes or c],
-                "cells": cells, "budgets": budgets}
+                "cells": cells, "budgets": budgets, "names": self.names(a)}
 
     def node_detail(self, query: dict[str, str], body: Any) -> dict[str, Any]:
         code = query.get("code", "")
@@ -803,6 +819,7 @@ class App:
                         "pass": {_s(c.get("ma_uv")): a.candidate_result(_s(c.get("ma_uv"))) == rules.RES_PASS for c in shown},
                         "rows": matrix},
             "leaves": [],
+            "names": self.names(a),
         }
 
     def sourcing(self, query: dict[str, str], body: Any) -> dict[str, Any]:
@@ -813,7 +830,7 @@ class App:
             queue.append({"uv": uv, "node": _s(c.get("ma_nut")), "hang": _s(c.get("hang")), "model": _s(c.get("model")),
                           "price": c.get("gia_cong_bo"), "currency": _s(c.get("tien_te")),
                           "owner": _s(a.owner_of(_s(c.get("ma_nut"))))})
-        return {"queue": queue}
+        return {"queue": queue, "names": self.names(a)}
 
     # ---- routing ------------------------------------------------------------
 

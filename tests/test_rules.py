@@ -955,3 +955,15 @@ def test_engineer_checks() -> None:
 def test_unknown_check_raises() -> None:
     with pytest.raises(KeyError):
         rules.run_check("nope", build())
+
+
+def test_leaves_of_a_rejected_architecture_are_not_active():
+    """Regression (predator flow): nodes tagged ma_kt of a Loại architecture drop out of the leaves."""
+    from t3desk import rules as r
+
+    tables = {"nut": [{"ma_nut": "N0", "ten": "root"}, {"ma_nut": "N1", "ma_cha": "N0", "ma_kt": "KT-B", "ten": "a"},
+                      {"ma_nut": "N1.1", "ma_cha": "N1", "ten": "b"}, {"ma_nut": "N2", "ma_cha": "N0", "ten": "c"}],
+              "kien_truc": [{"ma_kt": "KT-A", "trang_thai": "Chọn"}, {"ma_kt": "KT-B", "trang_thai": "Loại"}]}
+    assert set(r.analyse(tables).leaves) == {"N2"}
+    tables["kien_truc"][1]["trang_thai"] = "Đề xuất"
+    assert set(r.analyse(tables).leaves) == {"N1.1", "N2"}

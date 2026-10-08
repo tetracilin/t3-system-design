@@ -666,8 +666,9 @@ def part2_structure(f: Flow) -> None:
         parent = code.split(".")[0]
         count[parent] = count.get(parent, 0) + 1
         assert code == f"{parent}.{count[parent]}"
+        option = {"Fins": "KT-B", "Wings": "KT-C"}.get(name)  # fins belong to KT-B, wings to KT-C
         f.add("nut", code, {"ma_cha": parent, "ten": name, "loai": kind, "so_luong": 2 if name == "Legs" else 1,
-                            "phu_trach": owner}, parent=parent)
+                            "phu_trach": owner, **({"ma_kt": option} if option else {})}, parent=parent)
     f.set_gate("chot_cap_1", True)
     f.set_gate("chot_cap_2", True)
     for code, yc, node, kind in ALLOCATIONS:
@@ -896,10 +897,6 @@ def test_part2_task_outbox_after_the_decision(flow: Flow, hermes: FakeHermes, tm
     assert not any(k.startswith("CV|rfq|") for k in keys)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "KNOWN GAP, needs a decision from Viet (CLAUDE.md: do not guess): nodes carry no link to an architecture, so the "
-    "leaves of a rejected option (fins, wings) are still 'active' and still get open step tasks. See "
-    "docs/notes/flow-predator.md, question 1."))
 def test_part2_rejected_option_leaves_must_not_have_open_tasks(flow: Flow, hermes: FakeHermes, tmp_path: Path) -> None:
     keys = tasks_after_decision(flow, hermes, tmp_path)
     assert "CV|buoc|N1.3" not in keys and "CV|buoc|N1.4" not in keys  # fins (KT-B) and wings (KT-C)
@@ -925,3 +922,20 @@ def test_part2_rfq_payload_for_a_node_has_no_price_budget_or_score(flow: Flow, h
     f.commit()
     assert f.env.fake.records("rfq")[0]["fields"]["trang_thai"] == "Đã tạo"
     assert BUDGET_MILLION_VND not in json.dumps(hermes.requests)
+
+
+def test_names_travel_with_every_screen_so_codes_are_never_shown_alone(flow: Flow) -> None:
+    """The UI shows "N1 - Propulsion" in pickers, tables, matrix headers: every screen payload carries the names."""
+    f = flow
+    step1_requirements(f)
+    step2_architectures(f)
+    build_kt_b_tree(f)
+    f.add("phan_bo", "PB-001", {"ma_yc": "R2", "ma_nut": "N3.1", "kieu": EACH})
+    expected = {"nut": "Propulsion (fin/tail)", "yeu_cau": "Hunt well", "kien_truc": "Aquatic hunter"}
+    for path, query in (("/api/rows", {"table": "phan_bo"}), ("/api/alloc", {}), ("/api/tree_nodes", {}),
+                        ("/api/sourcing", {}), ("/api/node", {"code": "N3.1"})):
+        names = f.env.get(path, **query)["names"]
+        assert names["nut"]["N1"] == expected["nut"] and names["nut"]["N3.1"] == "Sharp teeth"
+        assert names["yeu_cau"]["R2"] == expected["yeu_cau"] and names["kien_truc"]["KT-B"] == expected["kien_truc"]
+    # drafts count too: a node that is only a draft is named
+    assert f.env.get("/api/rows", table="nut")["names"]["nut"]["N0"] == "Predator"

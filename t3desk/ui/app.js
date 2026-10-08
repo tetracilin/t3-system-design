@@ -5,7 +5,7 @@
 const SESSION = document.querySelector('meta[name="session"]').content;
 const S = {
   meta: null, st: null, screen: 'khoi_tao', node: '', owner: '', treeName: '', treeData: null, fnode: '',
-  panel: 'open', renderId: 0, sort: {}, lastLeaf: '', form: null, tableCache: {},
+  names: {}, panel: 'open', renderId: 0, sort: {}, lastLeaf: '', form: null, tableCache: {},
 };
 
 /* ---------- text and helpers ---------- */
@@ -70,6 +70,7 @@ async function api(path, opts) {
   let data;
   try { data = await res.json(); } catch (e) { data = { error: { code: 'internal', detail: String(res.status) } }; }
   if (!res.ok) throw new ApiFail(data.error, res.status);
+  if (data && data.names) S.names = Object.assign({}, S.names, data.names); // code -> name, shown beside every code
   return data;
 }
 
@@ -186,6 +187,7 @@ function drawPanel() {
   }
   const tree = data.trees[S.treeName];
   if (!tree) return;
+  drawHelp(tree, data.guide || []);
   TreeView.draw(document.getElementById('tree-view'), tree, {
     yesText: T('answer_yes'), noText: T('answer_no'),
     onAction: (screen) => go(screen, { node: S.node }),
@@ -194,6 +196,23 @@ function drawPanel() {
       if (sig !== S.lastLeaf) { S.lastLeaf = sig; el.scrollIntoView({ block: 'center', inline: 'nearest' }); }
     },
   });
+}
+
+/* guidance under the tree: help of the question you are at, every step's help, and the glossary */
+function drawHelp(tree, guide) {
+  const box = document.getElementById('tree-help');
+  box.textContent = '';
+  const here = tree.leaf ? tree.questions.find((q) => q.index === tree.leaf.index) : null;
+  if (here && here.help) box.appendChild(h('div', { class: 'here-help' }, h('b', { text: T('guide_here') + ': ' }), here.help));
+  const steps = tree.questions.filter((q) => q.help);
+  if (steps.length) {
+    box.appendChild(h('details', null, h('summary', { text: T('guide_all') }),
+      steps.map((q) => h('p', null, h('b', { text: q.q + ' ' }), q.help))));
+  }
+  if (guide.length) {
+    box.appendChild(h('details', { id: 'guide-glossary' }, h('summary', { text: T('guide_glossary') }),
+      guide.map((g) => h('p', null, h('b', { text: g.term + ': ' }), g.text))));
+  }
 }
 
 async function selectNode(code) {
@@ -270,8 +289,19 @@ function isRateKey(table, key) {
   return table === cfg.table && !!cfg.key_prefix && String(key || '').startsWith(cfg.key_prefix);
 }
 
+/* "N1 - Propulsion": a code is never shown alone when its name is known */
+function withName(ref, code) {
+  const nm = ((S.names || {})[ref] || {})[code];
+  return nm ? code + ' - ' + nm : code;
+}
+
 function cellText(table, name, value) {
   if (value === null || value === undefined) return '';
+  const fs = (specOf(table).fields || {})[name];
+  if (fs && fs.ref && value !== '') {
+    const sep = fs.multi || null;
+    return (sep ? String(value).split(sep) : [String(value)]).map((c) => withName(fs.ref, c.trim())).join('; ');
+  }
   if (table === 'cai_dat' && name === 'khoa' && settingLabel(value)) return settingLabel(value) + ' (' + value + ')';
   return String(value);
 }
@@ -344,7 +374,7 @@ function tableView(table, data, opts) {
 function filterBar(table, data, onChange) {
   const nodeSel = h('select', { id: 'f-node', 'aria-label': T('filter_node') },
     h('option', { value: '', text: T('filter_node') + ': ' + T('all') }),
-    data.nodes.map((n) => h('option', { value: n, text: n, selected: n === S.fnode })));
+    data.nodes.map((n) => h('option', { value: n, text: withName('nut', n), selected: n === S.fnode })));
   const ownerSel = h('select', { id: 'f-owner', 'aria-label': T('filter_owner') },
     h('option', { value: '', text: T('filter_owner') + ': ' + T('all') }),
     data.owners.map((n) => h('option', { value: n, text: n, selected: n === S.owner })));
@@ -427,7 +457,7 @@ function widget(table, name, spec, value, refIds, readonly) {
     el = h('input', { id, name, type: 'text' });
     el.value = value === undefined || value === null ? '' : value;
     if (spec.ref && refIds) {
-      const dl = h('datalist', { id: 'dl-' + name }, refIds.map((r) => h('option', { value: r })));
+      const dl = h('datalist', { id: 'dl-' + name }, refIds.map((r) => h('option', { value: r, label: withName(spec.ref, r), text: withName(spec.ref, r) })));
       el.setAttribute('list', 'dl-' + name);
       el._datalist = dl;
     }
@@ -479,6 +509,14 @@ async function openForm(opts) {
     const cell = h('div', { class: 'f' + (fs.type === 'longtext' ? ' wide' : ''), 'data-field': name }, label, el, el._datalist || null);
     if (name === idName && spec.id.example) cell.appendChild(h('span', { class: 'muted', text: T('id_example', { ex: spec.id.example }) }));
     if (fs.multi) cell.appendChild(h('span', { class: 'muted', text: T('multi_hint', { sep: fs.multi }) }));
+    if (fs.ref) {  // show the name of the chosen code(s) under the field, updated as the user types
+      const hint = h('span', { class: 'muted ref-name' });
+      const show = () => { hint.textContent = el.value ? cellText(table, name, el.value) : ''; };
+      el.addEventListener('input', show);
+      el.addEventListener('change', show);
+      show();
+      cell.appendChild(hint);
+    }
     grid.appendChild(cell);
   }
   const msg = h('div', { class: 'err', id: 'form-error' });
@@ -724,7 +762,7 @@ SCREENS.phan_bo = async (box) => {
   const t = h('table', { class: 'grid', id: 'alloc-matrix' });
   t.appendChild(h('thead', null, h('tr', null,
     h('th', { class: 'nosort', text: T('col_requirement') }),
-    data.nodes.map((n) => h('th', { class: 'nosort', text: n })),
+    data.nodes.map((n) => h('th', { class: 'nosort', title: withName('nut', n), text: withName('nut', n) })),
     h('th', { class: 'nosort', text: T('col_budget_total') }), h('th', { class: 'nosort', text: T('col_margin') }))));
   const body = h('tbody');
   for (const r of data.requirements) {
@@ -776,7 +814,7 @@ SCREENS.nut = async (box) => {
       return h('tr', { class: r._draft ? 'is-draft' : '', 'data-key': r[idName] || r._key, onclick: () => openRow(table, r[idName] || r._key) },
         h('td', null, r._draft ? h('span', { class: 'badge draft', text: T('draft_mark') }) : null,
           (r._warnings && r._warnings.length) ? h('span', { class: 'badge warn', title: r._warnings.join('\n'), text: '! ' + r._warnings.length }) : null),
-        cols.map((c) => h('td', { text: num(r[c]) })), extra ? h('td', { text: extra.get(r) }) : null);
+        cols.map((c) => h('td', { text: ((specOf(table).fields[c] || {}).ref ? cellText(table, c, r[c]) : num(r[c])) })), extra ? h('td', { text: extra.get(r) }) : null);
     })));
     return h('div', { class: 'tablewrap' }, t);
   };
@@ -816,7 +854,7 @@ SCREENS.mua_hang = async (box) => {
   box.appendChild(h('h2', { text: T('src_queue') + ' (' + q.queue.length + ')' }));
   box.appendChild(q.queue.length ? h('ul', { class: 'plain', id: 'src-queue' }, q.queue.map((c) =>
     h('li', { class: 'click', 'data-uv': c.uv, onclick: () => openForm({ table: 'mua_hang', prefill: { ma_uv: c.uv, tien_te: c.currency } }) },
-      h('b', { text: c.uv }), ' ' + c.node + ' - ' + [c.hang, c.model].filter(Boolean).join(' ') + (c.price !== null && c.price !== undefined ? ' - ' + c.price + ' ' + c.currency : ''))))
+      h('b', { text: c.uv }), ' ' + withName('nut', c.node) + ' - ' + [c.hang, c.model].filter(Boolean).join(' ') + (c.price !== null && c.price !== undefined ? ' - ' + c.price + ' ' + c.currency : ''))))
     : h('p', { class: 'muted', text: T('src_queue_empty') }));
   box.appendChild(h('h2', { text: T('src_rows') }));
   await tableScreen(box, 'mua_hang');

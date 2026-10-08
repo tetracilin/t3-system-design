@@ -19,6 +19,7 @@ from t3desk import rules
 
 DEFAULT_PATH = rules.DATA_DIR / "decision_tree.yaml"
 TREE_NAMES = ("system_design", "designer", "engineer")
+GUIDE_KEY = "guide"  # top-level list of {term, text}: what a field or word means
 
 
 class DecisionTreeError(ValueError):
@@ -38,6 +39,7 @@ class Question:
     check: str | None = None
     yes: Branch | None = None
     no: Branch | None = None
+    help: str = ""  # guidance shown under the tree when this is the question you are at
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,8 @@ def parse_trees(data: Any) -> Trees:
         raise DecisionTreeError("decision tree file must be a mapping of tree name to question list")
     trees: Trees = {}
     for name, items in data.items():
+        if name == GUIDE_KEY:  # the glossary is not a tree
+            continue
         if not isinstance(items, list) or not items:
             raise DecisionTreeError(f"tree '{name}' must be a non-empty list of questions")
         questions: list[Question] = []
@@ -107,7 +111,7 @@ def parse_trees(data: Any) -> Trees:
                 raise DecisionTreeError(f"{where}: unknown check '{check}'")
             questions.append(
                 Question(i, str(item["q"]), check, _branch(item.get("yes"), where + ".yes"),
-                         _branch(item.get("no"), where + ".no"))
+                         _branch(item.get("no"), where + ".no"), str(item.get("help") or "").strip())
             )
         trees[str(name)] = questions
     return trees
@@ -125,15 +129,32 @@ def load_trees(path: Path | str | None = None) -> Trees:
         raise DecisionTreeError(f"{target} is not valid YAML: {exc}") from exc
 
 
+def load_guide(path: Path | str | None = None) -> list[dict[str, str]]:
+    """The glossary at the end of the tree file: [{term, text}], empty when there is none."""
+    target = Path(path) if path else DEFAULT_PATH
+    try:
+        with open(target, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError):
+        return []  # load_trees reports the real problem
+    items = data.get(GUIDE_KEY) if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    return [{"term": str(i["term"]), "text": str(i["text"]).strip()} for i in items
+            if isinstance(i, dict) and i.get("term") and i.get("text")]
+
+
 class TreeStore:
     """Holds the loaded trees; ``reload()`` rereads the file (Settings > reload)."""
 
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path else DEFAULT_PATH
         self.trees: Trees = load_trees(self.path)
+        self.guide = load_guide(self.path)
 
     def reload(self) -> Trees:
         self.trees = load_trees(self.path)
+        self.guide = load_guide(self.path)
         return self.trees
 
     def evaluate(self, name: str, data: Any, ctx: rules.Context | None = None) -> TreeResult:

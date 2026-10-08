@@ -188,7 +188,8 @@ class Analysis:
         for code, row in self.nodes.items():
             if _s(row.get("ma_cha")):
                 self.children[_s(row["ma_cha"])].append(code)
-        self.leaves = [c for c in self.nodes if c not in self.parent_codes]
+        self.inactive = self._inactive_nodes()
+        self.leaves = [c for c in self.nodes if c not in self.parent_codes and c not in self.inactive]
 
         self.specs_by_node = self._group("thong_so", "ma_nut")
         self.alloc_by_node = self._group("phan_bo", "ma_nut")
@@ -202,6 +203,18 @@ class Analysis:
         self._result_cache: dict[str, str] = {}
         self._next_cache: dict[str, NextAction] = {}
         self._warnings: list[Warn] | None = None
+
+    def _inactive_nodes(self) -> set[str]:
+        """Nodes tagged (ma_kt) with an architecture that is rejected, and everything below them."""
+        rejected = {_s(a.get("ma_kt")) for a in self.t["kien_truc"] if _s(a.get("trang_thai")) == V.ARCH_REJECTED}
+        out = {c for c, r in self.nodes.items() if _s(r.get("ma_kt")) in rejected and _s(r.get("ma_kt"))}
+        stack = list(out)
+        while stack:
+            for child in self.children.get(stack.pop(), []):
+                if child not in out:
+                    out.add(child)
+                    stack.append(child)
+        return out
 
     # -- grouping and settings -------------------------------------------------
 

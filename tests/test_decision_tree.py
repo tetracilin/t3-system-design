@@ -193,3 +193,14 @@ def test_shipped_yaml_text_matches_section_6() -> None:
     first = trees["system_design"][0]
     assert first.check == "requirements_complete" and first.no.screen == "yeu_cau"
     assert trees["engineer"][-1].check == "counters_zero" and trees["engineer"][-1].yes is None
+
+
+def test_guidance_travels_with_the_trees_and_explains_allocation_values():
+    """The panel shows help for the question you are at and a glossary (e.g. what a Giá trị phân bổ is)."""
+    trees = dt.load_trees()
+    assert all(q.help for questions in trees.values() for q in questions if q.check)
+    assert "Phân bổ" in next(q.help for q in trees["system_design"] if q.check == "all_must_allocated")
+    guide = dt.load_guide()
+    terms = {g["term"]: g["text"] for g in guide}
+    assert "Chia ngân sách" in terms["Giá trị phân bổ"] and "kg" in terms["Giá trị phân bổ"]
+    assert dt.TREE_NAMES == tuple(trees)  # the glossary is not mistaken for a tree

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>T3 Desk - 4-pane workspace (mockup)</title>
+<style>
+:root{--bg:#f3f5f8;--panel:#fff;--ink:#1c2330;--muted:#5d687a;--line:#d5dae3;--accent:#1f6feb;--on:#e6f0ff;--draft:#fff7d6;--warn:#c0392b;--ok:#1a7f37;--head:#eef1f6}
+*{box-sizing:border-box}body{margin:0;font:13px/1.35 "Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg);width:1600px;height:900px;display:flex;flex-direction:column}
+#top{height:34px;background:#1c2330;color:#fff;display:flex;align-items:center;padding:0 14px;gap:20px;font-size:12px}
+#top b{font-size:14px}#top .sp{flex:1}
+#main{flex:1;display:grid;grid-template-columns:290px 310px 1fr 290px;min-height:0}
+.pane{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.ph{padding:7px 10px;border-bottom:1px solid var(--line);font-weight:600;background:var(--head);display:flex;gap:8px;align-items:center}
+.ph small{font-weight:400;color:var(--muted)}
+.n1{padding:6px 10px 2px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.mi{padding:5px 10px 5px 14px;display:flex;justify-content:space-between;cursor:pointer}.mi.sel{background:var(--on);border-left:3px solid var(--accent);padding-left:11px;font-weight:600}
+.badge{background:#e8ebf1;border-radius:9px;padding:0 7px;font-size:11px;color:var(--muted)}.badge.r{background:#fde4e1;color:var(--warn)}
+.tree{border-top:2px solid var(--line);margin-top:6px;flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.q{margin:4px 8px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--muted)}.q.on{background:var(--on);border-color:var(--accent);color:var(--ink)}
+.q.here{background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)}
+.help{margin:6px 8px;padding:6px 8px;border-left:3px solid var(--accent);background:var(--on);font-size:12px}
+/* SBS tree */
+.row{display:flex;align-items:center;padding:4px 8px;border-bottom:1px solid #eef0f4;gap:6px;cursor:pointer}.row.sel{background:var(--on)}
+.tw{width:14px;color:var(--muted)}.code{font-weight:700;min-width:34px}.nm{flex:1}.nx{font-size:11px;color:var(--muted)}
+.done{color:var(--ok)}.dot{width:8px;height:8px;border-radius:50%;background:#bbb;display:inline-block}.dot.g{background:var(--ok)}.dot.y{background:#e0a800}.dot.r{background:var(--warn)}
+.legend{padding:6px 10px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+/* excel */
+.tabs{display:flex;gap:2px;padding:6px 10px 0;background:var(--head);border-bottom:1px solid var(--line)}
+.tab{padding:5px 12px;border:1px solid var(--line);border-bottom:none;border-radius:6px 6px 0 0;background:#e3e7ee;cursor:pointer}.tab.on{background:#fff;font-weight:600;margin-bottom:-1px}
+.bar{padding:6px 10px;display:flex;gap:10px;align-items:center;border-bottom:1px solid var(--line)}.bar .sp{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:5px;padding:3px 10px}.btn.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+table{border-collapse:collapse;width:100%;background:#fff}
+th{background:var(--head);border:1px solid var(--line);padding:4px 6px;text-align:left;font-weight:600;position:sticky;top:0;font-size:12px}
+td{border:1px solid var(--line);padding:3px 6px;height:26px;white-space:nowrap}
+td.rn{background:var(--head);color:var(--muted);text-align:center;width:30px;font-size:11px}
+tr.draft td{background:var(--draft)}tr.draft td.rn{background:#f3e7a8}
+td.edit{outline:2px solid var(--accent);outline-offset:-2px;background:#fff;position:relative}
+td.edit .cur{display:inline-block;width:1px;height:14px;background:#000;vertical-align:middle}
+td.sel{outline:2px solid var(--accent);outline-offset:-2px}
+td.ref{color:var(--ink)}td.ref i{font-style:normal;color:var(--muted)}
+td.err{background:#fde4e1}td.new{color:#99a;font-style:italic}
+.dd{position:absolute;left:-1px;top:24px;width:230px;background:#fff;border:1px solid var(--accent);box-shadow:0 6px 16px rgba(0,0,0,.2);z-index:5;font-style:normal;color:var(--ink)}
+.dd div{padding:4px 8px}.dd div.h{background:var(--on)}
+.cmp{padding:6px 10px;font-size:12px;color:var(--muted)}
+.detail{padding:8px 12px;border-top:2px solid var(--line);background:#fafbfd;font-size:12px}
+.detail h4{margin:0 0 4px}.chip{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:1px 8px;margin:2px;background:#fff}.chip.bad{border-color:var(--warn);color:var(--warn)}
+#status{height:26px;background:#fff;border-top:1px solid var(--line);display:flex;gap:22px;align-items:center;padding:0 14px;font-size:12px;color:var(--muted)}
+.note{position:absolute;background:#111;color:#fff;border-radius:6px;padding:4px 9px;font-size:12px;z-index:9}
+.num{position:absolute;width:24px;height:24px;border-radius:50%;background:#d6336c;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;z-index:9}
+</style></head><body>
+<div id="top"><b>T3 Desk</b><span>Dự án: Predator</span><span>Người dùng: an (Thiết kế hệ thống)</span><span class="sp"></span><span>Teable: ● online</span><span>Bản nháp: 5</span><button class="btn p">Commit (Ctrl+Enter)</button></div>
+<div id="main">
+
+<!-- PANE 1: menu + decision tree merged -->
+<div class="pane" style="position:relative">
+ <div class="ph">① Menu + Cây quyết định <small>luôn hiện</small></div>
+ <div class="n1">Thiết kế hệ thống</div>
+ <div class="mi">Tổng quan <span class="badge r">3</span></div>
+ <div class="mi">Yêu cầu <span class="badge">2</span></div>
+ <div class="mi">Kiến trúc <span class="badge">3</span></div>
+ <div class="mi sel">Cây hệ thống &amp; Phân bổ <span class="badge">9</span></div>
+ <div class="n1">Thiết kế nút</div>
+ <div class="mi">Nút, thông số, ứng viên <span class="badge">5</span></div>
+ <div class="mi">Mua hàng <span class="badge r">2</span></div>
+ <div class="mi">RFQ / RFP · Mốc · Commit</div>
+ <div class="tree">
+  <div class="ph" style="border-top:0">Bạn đang ở bước nào? <small>Hệ thống ▾ Nút ▾ Hằng ngày</small></div>
+  <div class="q on">✓ Yêu cầu đầy đủ?</div><div class="q on">✓ Có ≥ 2 kiến trúc?</div><div class="q on">✓ Đã chọn 1 kiến trúc + lý do?</div><div class="q on">✓ Chốt cấp 1?</div><div class="q on">✓ Chốt cấp 2?</div>
+  <div class="q here">▶ Bạn đang ở đây: Phân bổ mỗi yêu cầu Bắt buộc về nút</div>
+  <div class="help"><b>Hướng dẫn:</b> Giá trị phân bổ là phần của giới hạn hệ thống giao cho nút. Ví dụ 10 kg chia 4 + 3 + 2 kg. Bấm ô <i>Giá trị phân bổ</i> ở bảng bên phải và gõ trực tiếp.</div>
+  <div class="q">Có yêu cầu vượt giới hạn?</div><div class="q">Mọi nút lá có người phụ trách?</div>
+ </div>
+</div>
+
+<!-- PANE 2: hierarchy / system breakdown chart -->
+<div class="pane" style="position:relative">
+ <div class="ph">② Hệ thống phân rã <small>bấm để chọn nút · KT-A</small></div>
+ <div class="bar"><span class="btn">⊕ Thêm nút con</span><span class="btn">Chốt cấp 1 ☑</span><span class="btn">Chốt cấp 2 ☑</span></div>
+ <div class="row"><span class="tw">▾</span><span class="code">N0</span><span class="nm">Predator</span><span class="nx">0/5 lá xong</span></div>
+ <div class="row" style="padding-left:24px"><span class="tw">▾</span><span class="code">N1</span><span class="nm">Locomotion</span><span class="nx">0/4</span></div>
+ <div class="row" style="padding-left:44px"><span class="dot y"></span><span class="code">N1.1</span><span class="nm">Legs</span><span class="nx">3. Tìm ứng viên 1/3</span></div>
+ <div class="row" style="padding-left:44px"><span class="dot y"></span><span class="code">N1.2</span><span class="nm">Tail</span><span class="nx">2. Viết thông số</span></div>
+ <div class="row" style="padding-left:44px;opacity:.45"><span class="dot"></span><span class="code">N1.3</span><span class="nm"><s>Fins</s> (KT-B, Loại)</span><span class="nx">không tính</span></div>
+ <div class="row" style="padding-left:44px;opacity:.45"><span class="dot"></span><span class="code">N1.4</span><span class="nm"><s>Wings</s> (KT-C, Loại)</span><span class="nx">không tính</span></div>
+ <div class="row" style="padding-left:24px"><span class="tw">▾</span><span class="code">N2</span><span class="nm">Sensing</span><span class="nx">0/1</span></div>
+ <div class="row" style="padding-left:44px"><span class="dot r"></span><span class="code">N2.1</span><span class="nm">Eye</span><span class="nx">Chờ Mua hàng</span></div>
+ <div class="row" style="padding-left:24px"><span class="tw">▾</span><span class="code">N3</span><span class="nm">Bite system</span><span class="nx">1/1</span></div>
+ <div class="row sel" style="padding-left:44px"><span class="dot g"></span><span class="code">N3.1</span><span class="nm">Jaw</span><span class="nx done">Xong ✓</span></div>
+ <div class="legend">● xanh xong · ● vàng đang làm · ● đỏ có cảnh báo/chờ · mờ = thuộc kiến trúc bị loại<br>Chọn một nút → bảng ③ lọc theo nút đó.</div>
+</div>
+
+<!-- PANES 3+4: detail (excel) -->
+<div class="pane" style="position:relative">
+ <div class="ph">③ Chi tiết nút <b>N3.1 Jaw</b> <small>Phụ trách: lan · Việc tiếp theo: <b class="done">Xong</b></small></div>
+ <div class="tabs"><span class="tab">Phân bổ (1)</span><span class="tab on">Thông số (2)</span><span class="tab">Ứng viên (3)</span><span class="tab">Đối chiếu</span><span class="tab">Mua hàng</span></div>
+ <div class="bar"><span class="btn p">⊕ Dòng mới</span><span style="color:var(--muted)">Gõ vào dòng cuối để thêm · Tab/Enter di chuyển · Esc hủy ô · Ctrl+S lưu nháp</span><span class="sp"></span><span class="btn">CSV</span></div>
+ <div style="overflow:hidden">
+ <table>
+  <tr><th></th><th>Mã TS</th><th>Mã yêu cầu gốc</th><th>Thông số</th><th>Kiểu</th><th>Min</th><th>Max</th><th>Đơn vị</th><th>Mức</th><th>Kiểm chứng</th></tr>
+  <tr><td class="rn">1</td><td>TS-009</td><td class="ref">R2 <i>– Hunt well</i></td><td>Bite force</td><td>Số</td><td>2000</td><td></td><td>N</td><td>Bắt buộc</td><td>Bite rig</td></tr>
+  <tr class="draft"><td class="rn">2 ✎</td><td>TS-010</td><td class="edit ref">R<span class="cur"></span><div class="dd"><div class="h"><b>R1</b> – Be an apex predator</div><div><b>R2</b> – Hunt well</div><div style="color:var(--muted)">Dẫn xuất</div></div></td><td class="sel">Penetration depth</td><td>Số</td><td>20</td><td>60</td><td>mm</td><td>Bắt buộc</td><td></td></tr>
+  <tr class="draft"><td class="rn">3 ✎</td><td>TS-011</td><td>Dẫn xuất</td><td>Tooth hardness</td><td>Số</td><td class="err">⚠</td><td class="err"></td><td>HV</td><td>Mong muốn</td><td></td></tr>
+  <tr><td class="rn">＊</td><td class="new">TS-012 (tự đề xuất)</td><td class="new">chọn…</td><td class="new">gõ để thêm</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+ </table>
+ </div>
+ <div class="cmp"><span class="badge r">1 ô lỗi</span> TS-011: thông số số cần Min hoặc Max. Con trỏ vào ô sẽ hiện lý do ngay tại ô (không cần mở hộp thoại).</div>
+
+</div>
+<div class="pane" style="border-right:0;position:relative">
+ <div class="ph">④ Ngữ cảnh &amp; trợ giúp <small>dòng đang chọn: TS-010</small></div>
+ <div class="detail" style="flex:1;border-top:0">
+  Yêu cầu gốc <b>R2 Hunt well</b><br><span style="color:var(--muted)">Tiêu chí: tỷ lệ bắt mồi ≥ 60 % / 100 lần săn.</span><br><br>
+  Phân bổ cho nút:<br><span class="chip">PB-008 R2 · Mỗi nút phải đạt</span><br><br>
+  Ứng viên đã đối chiếu:<br><span class="chip">UV-001 ✓ 35 mm</span><span class="chip">UV-002 ✓ 28 mm</span><span class="chip bad">UV-003 ✗ 12 mm</span><br><br>
+  Cảnh báo của dòng:<br><span class="chip bad">TS-011 thiếu Min/Max</span><br><br>
+  <div class="help" style="margin:0"><b>Cách điền:</b> Min/Max kèm đơn vị, mức (Bắt buộc/Mong muốn), mã yêu cầu gốc (hoặc Dẫn xuất), cách kiểm chứng.</div>
+  <br><b>Từ điển</b> <span style="color:var(--muted)">Giá trị phân bổ · RSS · Phương án…</span>
+  <div style="border-top:2px solid var(--line);margin:10px -12px 0;padding:8px 12px 0">
+   <b>Ghi chú về TS-010</b> <span class="badge">3</span>
+   <div style="border:1px solid var(--line);border-radius:6px;background:#fff;padding:5px 7px;margin:6px 0"><b>binh</b> <span style="color:var(--muted)">· 07/10 14:02</span><br><b>Độ sâu</b> lấy theo <i>datasheet UV-001</i>, cần <code>≥ 20 mm</code>.<br>- hỏi lại nhà cung cấp</div>
+   <div style="border:1px solid var(--line);border-radius:6px;background:#fff;padding:5px 7px;margin:6px 0"><b>an</b> <span style="color:var(--muted)">· 07/10 15:30 · đã sửa</span><br>OK, giữ 20 mm. Xem R2.</div>
+   <div style="border:1px solid var(--accent);border-radius:6px;background:#fff;margin:6px 0">
+    <div style="padding:3px 7px;border-bottom:1px solid var(--line);color:var(--muted);font-size:11px">Người viết: <b>an</b> · Markdown &nbsp; <b>B</b> <i>I</i> • &lt;/&gt; 🔗 &nbsp;|&nbsp; Soạn · <u>Xem trước</u></div>
+    <div style="padding:5px 7px;min-height:44px;color:#333">Cần kiểm tra **độ sâu** ở nhiệt độ thấp.<span class="cur"></span></div>
+    <div style="padding:3px 7px;text-align:right"><span class="btn p">Lưu ghi chú nháp</span></div></div>
+  </div>
+  <div style="border:1px dashed #8a63d2;border-radius:6px;margin:10px 0 0;padding:6px 8px;background:#f6f1ff">
+   <b style="color:#5b34b0">Trợ lý Hermes</b> <span class="badge">chưa kết nối</span><br>
+   <span style="color:var(--muted)">Dòng đang chọn và ghi chú sẽ gửi đi sau khi bạn xem trước nội dung và máy chủ đích.</span>
+   <div style="margin:5px 0"><span class="btn" style="opacity:.6">🔎 Tìm ứng viên</span> <span class="btn" style="opacity:.6">✎ Gợi ý thông số</span> <span class="btn" style="opacity:.6">Tra cứu bối cảnh</span></div>
+   <div style="border:1px solid #cdbbf0;border-radius:5px;background:#fff;padding:4px 6px;color:#999">Hỏi trợ lý… (chưa bật)</div>
+  </div>
+ </div>
+</div>
+</div>
+<div id="status"><span>Bản nháp có nền vàng ✎ và chưa gửi</span><span>Cache: 12 s</span><span>5 bản nháp · 1 lỗi cần sửa trước Commit</span></div>
+
+<div class="num" style="left:150px;top:44px">1</div>
+<div class="num" style="left:400px;top:44px">2</div>
+<div class="num" style="left:760px;top:44px">3</div>
+<div class="num" style="left:1330px;top:44px">4</div>
+</body></html>

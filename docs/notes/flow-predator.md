@@ -20,12 +20,7 @@ conflict, offline and RFQ paths behaved as in section 5 and 9.
 
 ## Gaps that need a decision (not fixed, CLAUDE.md says ask)
 
-1. **Rejected options keep active leaves.** Nodes carry no link to an architecture, so after KT-B and KT-C are `Loại` the
-   leaves for fins and wings still count: they show "3. Tìm ứng viên", they count in the counters, and `task_outbox`
-   opens `CV|buoc|N1.3` and `CV|buoc|N1.4` for them. Encoded as a strict `xfail`
-   (`test_part2_rejected_option_leaves_must_not_have_open_tasks`); it will fail loudly when someone fixes it.
-   Options: a `kien_truc` column on `nut` (schema change), derive membership from `he_con_cap1`, or tag by `phuong_an`
-   (PA-A to KT-A). Needs Viet. RFQ tasks (`CV|rfq|...`) are not affected: only `Đã gửi` RFQs past their reply date count.
+1. **Rejected options keep active leaves.** FIXED: new optional field `nut.ma_kt` (schema.yaml). Leaves of a node tagged with a `Loại` architecture (and its descendants) are no longer active: no step tasks, no counters. Test: `test_part2_rejected_option_leaves_must_not_have_open_tasks`, `test_leaves_of_a_rejected_architecture_are_not_active`. Untagged nodes stay active in every option. Existing bases need `t3desk bootstrap` re-run to add the column.
 2. **Nodes cannot be retired.** Rule "nothing is deleted, retire by status" has no status field on `nut`; a wrong node
    stays forever. Same question as 1 if a status is added.
 3. **Two chosen architectures give no warning.** Section 7 has no such warning. What happens: the decision tree goes back

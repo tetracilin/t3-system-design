@@ -86,6 +86,7 @@ tables:
       loai: {type: choice, required: true, choices: ["Hệ thống", "Cụm", "Mua OEM", "Tự chế tạo", "Phần mềm", "Dịch vụ"]}
       so_luong: {type: number, min: 0}
       phu_trach: {type: text}
+      ma_kt: {type: text, ref: kien_truc}  # option this node belongs to; empty = every option. A node of a rejected option (Loại) is not active
       ghi_chu: {type: longtext}
 
   phan_bo:

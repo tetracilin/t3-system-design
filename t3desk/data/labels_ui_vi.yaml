@@ -5,6 +5,9 @@
 ui:
   # panel and shell
   panel_title: "Cây quyết định"
+  guide_here: "Hướng dẫn cho bước bạn đang ở"
+  guide_all: "Hướng dẫn từng bước"
+  guide_glossary: "Từ và trường dữ liệu"
   panel_toggle: "Thu gọn hoặc mở rộng cây quyết định"
   panel_wide: "F1: nới rộng cây quyết định"
   panel_open: "»"

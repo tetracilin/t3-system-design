@@ -767,3 +767,21 @@ def test_window_failure_falls_back_to_the_browser(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(platform, "open_in_browser", lambda url: opened.append(url) or True)
     monkeypatch.setattr(time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
     assert main_mod.run_app(False) == 0 and opened
+
+
+def test_dialogs_never_cover_the_decision_tree_panel() -> None:
+    """The panel stays on top: the overlay stops at the panel edge for every panel width."""
+    css = (UI_DIR / "style.css").read_text(encoding="utf-8")
+    assert "#modal-root .overlay { position: fixed; inset: 0 var(--panel-w) 0 0;" in css
+    assert 'data-panel="strip"]) #modal-root .overlay { right: var(--strip-w); }' in css
+    assert 'data-panel="wide"]) #modal-root .overlay { right: 560px; }' in css
+    assert re.search(r"#panel \{ z-index: 4\d;", css)
+
+
+def test_trees_payload_carries_help_and_glossary(env: Env) -> None:
+    data = env.get("/api/trees")
+    assert all("help" in q for q in data["trees"]["system_design"]["questions"])
+    assert data["trees"]["system_design"]["questions"][5]["help"]
+    assert any(g["term"] == "Giá trị phân bổ" for g in data["guide"])
+    js = (UI_DIR / "app.js").read_text(encoding="utf-8")
+    assert "drawHelp" in js and 'id="tree-help"' in (UI_DIR / "index.html").read_text(encoding="utf-8")
