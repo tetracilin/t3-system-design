@@ -312,3 +312,28 @@ th.related { font-style: italic; background: var(--panel); }
 #alloc-panel .tablewrap { max-height: 38vh; overflow: auto; }
 #alloc-matrix td:first-child, #alloc-matrix th:first-child { min-width: 230px; max-width: 280px; position: sticky; left: 0; background: var(--panel); z-index: 1; }
 #alloc-matrix th { min-width: 120px; }
+
+/* the system breakdown as a diagram */
+.dg-scroll { overflow: auto; padding: 4px; }
+.dg-canvas { position: relative; }
+.dg-lines { position: absolute; left: 0; top: 0; pointer-events: none; }
+.dg-link { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.dg-box { position: absolute; box-sizing: border-box; border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 8px; background: var(--panel); padding: 4px 26px 4px 8px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+.dg-box.cap-0 { border-left-color: var(--accent); }
+.dg-box.cap-1 { border-left-color: var(--ok); }
+.dg-box.cap-2 { border-left-color: var(--draft); }
+.dg-box.sel { outline: 2px solid var(--accent); background: var(--head); }
+.dg-box.drop { outline: 2px dashed var(--accent); }
+.dg-box.inactive { opacity: .5; }
+.dg-box.is-draft { border-style: dashed; }
+.dg-l1 { display: flex; gap: 5px; align-items: center; font-size: 11px; white-space: nowrap; }
+.dg-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-box .chip { align-self: flex-start; font-size: 10px; }
+.dg-add, .dg-fold { position: absolute; right: 3px; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: inherit; cursor: pointer; line-height: 1; }
+.dg-add { top: 3px; }
+.dg-fold { bottom: 3px; }
+.dg-add:hover, .dg-fold:hover { background: var(--accent); color: var(--accent-ink); }
+.seg { display: inline-flex; gap: 2px; }
+.seg .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.p2-chart.dg-mode { flex-basis: 68%; }
+.p2-chart.dg-mode + .p2-library { flex-basis: 32%; }

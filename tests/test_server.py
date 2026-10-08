@@ -103,7 +103,7 @@ def test_serves_ui_files_and_injects_the_session(http: tuple[server.RunningServe
     status, body = fetch(running, "/")
     assert status == 200 and b"T3 Desk" in body
     assert env.app.session.encode() in body and b"__SESSION__" not in body
-    for name in ("app.js", "tree.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js", "style.css"):
+    for name in ("app.js", "tree.js", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js", "style.css"):
         assert fetch(running, "/" + name)[0] == 200
     assert fetch(running, "/server.py")[0] == 404
     assert fetch(running, "/../server.py")[0] in (403, 404)
@@ -137,7 +137,7 @@ def ui_labels() -> dict[str, str]:
 
 def test_every_label_the_ui_asks_for_exists() -> None:
     labels = ui_labels()
-    js = "".join((UI_DIR / n).read_text(encoding="utf-8") for n in ("app.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js", "index.html"))
+    js = "".join((UI_DIR / n).read_text(encoding="utf-8") for n in ("app.js", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js", "index.html"))
     literal = set(re.findall(r"T\('([a-z_0-9]+)'", js)) | set(re.findall(r'data-i(?:-title)?="([a-z_0-9]+)"', js))
     literal = {k for k in literal if not k.endswith("_")}
     expected = set(literal)
@@ -162,7 +162,7 @@ def test_ui_files_have_no_vietnamese_literals_and_no_external_urls() -> None:
     vietnamese = re.compile("[À-ÃÈ-ÊÌÍÒ-ÕÙÚÝà-ãè-ê"
                             "ìíò-õùúýĂăĐđĨĩŨũ"
                             "ƠơƯưẠ-ỹ]")
-    for name in ("index.html", "app.js", "tree.js", "style.css", "notes.js", "grid.js", "props.js", "quick.js", "keys.js"):
+    for name in ("index.html", "app.js", "tree.js", "style.css", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js"):
         text = (UI_DIR / name).read_text(encoding="utf-8")
         assert not vietnamese.search(text), f"{name} holds Vietnamese text; move it to labels_ui_vi.yaml"
         urls = [u for u in re.findall(r"https?://[A-Za-z0-9][^\s'\"]*", text) if u != "http://www.w3.org/2000/svg"]
@@ -688,7 +688,7 @@ def test_ui_javascript_parses_when_node_is_available() -> None:
         pytest.skip("node is not installed; the JavaScript was not syntax-checked")
     import subprocess
 
-    for name in ("app.js", "tree.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js"):
+    for name in ("app.js", "tree.js", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js"):
         result = subprocess.run([node, "--check", str(UI_DIR / name)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
 

@@ -46,6 +46,7 @@ STATIC_TYPES = {
     "tree.js": "text/javascript; charset=utf-8",
     "notes.js": "text/javascript; charset=utf-8",
     "grid.js": "text/javascript; charset=utf-8",
+    "diagram.js": "text/javascript; charset=utf-8",
     "props.js": "text/javascript; charset=utf-8",
     "quick.js": "text/javascript; charset=utf-8",
     "keys.js": "text/javascript; charset=utf-8",

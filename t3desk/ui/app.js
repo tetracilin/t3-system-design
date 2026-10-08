@@ -735,9 +735,12 @@ async function chartPane(ws) {
     data.archs.map((x) => h('option', { value: x.key, selected: x.key === S.arch, text: x.key + ' - ' + x.name + ' (' + x.status + ')' })));
   arch.addEventListener('change', () => { S.arch = arch.value; draw(); });
   bar.appendChild(h('label', { class: 'switch' }, T('arch_filter') + ': ', arch));
+  const viewBtn = (key) => h('button', { class: 'btn small', type: 'button', 'data-view': key, 'aria-pressed': String((S.chartView || 'diagram') === key),
+    text: T('chart_view_' + key), onclick: () => { S.chartView = key; render(); } });
+  bar.appendChild(h('span', { class: 'seg', role: 'group', 'aria-label': T('chart_view') }, viewBtn('diagram'), viewBtn('list')));
   bar.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
   const wrap = h('div', { id: 'chart', role: 'tree', 'aria-label': T('p2_chart') });
-  const top = h('div', { class: 'p2-chart' }, bar, wrap);
+  const top = h('div', { class: 'p2-chart' + ((S.chartView || 'diagram') === 'diagram' ? ' dg-mode' : '') }, bar, wrap);
   ws.p2.appendChild(top);
 
   const dropOn = (el, parent, ma_kt, allowed) => {
@@ -796,6 +799,16 @@ async function chartPane(ws) {
 
   const draw = () => {
     wrap.textContent = '';
+    if ((S.chartView || 'diagram') === 'diagram') {
+      drawDiagram(wrap, data, children, {
+        selected: S.node, collapsed: S.collapsed, archFilter: S.arch,
+        onSelect: (code) => selectNode(code),
+        onToggle: (code) => { S.collapsed[code] = !S.collapsed[code]; draw(); },
+        onAdd: (code) => { S.node = code; quickAddDialog('node'); },
+        onDrop: (code, item) => addToBreakdown({ item }, code),
+      });
+      return;
+    }
     const visit = (n, depth) => {
       if (S.arch && n.arch && n.arch !== S.arch) return;
       wrap.appendChild(nodeRow(n, depth));

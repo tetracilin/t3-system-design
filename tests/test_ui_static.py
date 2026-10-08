@@ -25,7 +25,7 @@ import yaml
 from t3desk import server
 
 UI = Path(server.__file__).resolve().parent / "ui"
-SCRIPTS = ("app.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js")
+SCRIPTS = ("app.js", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js")
 NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
@@ -61,7 +61,7 @@ def test_four_panes_in_order_and_pane_1_holds_the_menu_and_the_tree() -> None:
 def test_script_order_defines_the_helpers_before_the_modules_use_them() -> None:
     html = read("index.html")
     order = re.findall(r'<script src="/([a-z]+\.js)">', html)
-    assert order == ["tree.js", "app.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js"]
+    assert order == ["tree.js", "app.js", "notes.js", "grid.js", "diagram.js", "props.js", "quick.js", "keys.js"]
     for name in order:
         assert (UI / name).is_file()
 
