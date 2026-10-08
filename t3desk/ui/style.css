@@ -145,3 +145,17 @@ td.cell.over { background: var(--draft-bg); }
 body:has(#shell[data-panel="strip"]) #modal-root .overlay { right: var(--strip-w); }
 body:has(#shell[data-panel="wide"]) #modal-root .overlay { right: 560px; }
 @media (max-width: 900px) { #modal-root .overlay { right: var(--panel-w); } }
+
+.btn.small { padding: 1px 8px; font-size: 12px; }
+.finding .btn { margin-left: 6px; }
+.review-group h2 .btn { margin-left: 8px; }
+.radio { display: block; margin: 4px 0; }
+
+/* The weekly review prints on one page as the meeting record. */
+@media print {
+  #nav, #panel, #status, #toast, #modal-root, .no-print { display: none !important; }
+  #shell { display: block; }
+  #main { overflow: visible; padding: 0; }
+  body { background: #fff; color: #000; }
+  .counter, .review-group { break-inside: avoid; }
+}

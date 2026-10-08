@@ -51,6 +51,7 @@ class V:
     SOURCING_CLOSED = "Đóng"
     SOURCING_NOT_ASKED = "Chưa hỏi"
     CHANGE_OPEN = "Mở"
+    CHANGE_DONE = "Xong"
     MILESTONE = "G4a"
 
 

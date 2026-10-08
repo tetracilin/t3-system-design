@@ -295,7 +295,9 @@ class App:
             "tree_names": list(decision_tree.TREE_NAMES),
             "modifier": platform.shortcut_modifier(),
             "list_columns": MAX_LIST_COLUMNS,
-            "values": {"arch_chosen": rules.V.ARCH_CHOSEN, "yes": rules.V.YES, "no": GATE_OFF},
+            "values": {"arch_chosen": rules.V.ARCH_CHOSEN, "yes": rules.V.YES, "no": GATE_OFF,
+                       "change_open": rules.V.CHANGE_OPEN, "change_done": rules.V.CHANGE_DONE, "cancelled": rules.V.CANCELLED},
+            "retire_roles": list(CHANGE_CARD_RETIRE_ROLES),
         }
 
     def state(self, query: dict[str, str], body: Any) -> dict[str, Any]:

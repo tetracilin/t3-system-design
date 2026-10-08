@@ -14,6 +14,7 @@ Run the tests: `.\.venv\Scripts\python.exe -m pytest -o addopts="" -p no:cachepr
 - Packaging/docs: build scripts for Windows, macOS, Linux; `deploy/` (compose, `.env.example`, README); `README.md`; `HUONG_DAN.md`; `.gitignore`.
 - Predator user-flow test (8 Oct 2026): `tests/test_flow_predator.py` drives the whole design flow through the `/api/*` routes the UI uses (requirements, three architectures, choose before and after commit, gates, tree, allocation, specs, candidates, checks, sourcing, commit order, two-user conflict, offline, RFQs through fake Hermes, KT-A chosen and KT-B/C rejected, task_outbox). Findings: `docs/notes/flow-predator.md`.
 - Fixes from that flow: next-ID proposal for the root and its children (`N0`, `N1`, never `N0.1`); new optional `nut.ma_kt` field, nodes of a rejected architecture (and their descendants) are not active leaves (`rules.py` `_inactive_nodes`); `/api/*` screens return a `names` map and the UI shows `code - name` in pickers, tables, matrix headers and filters; the form overlay stops at the decision tree panel; `decision_tree.yaml` has `help` per question and a `guide:` glossary shown under the tree (`drawHelp` in `app.js`).
+- Weekly review (9 Oct 2026, `docs/designs/review-first-pilot.md`, eng-reviewed): screen `ra_soat` ("Rà soát tuần") with `GET /api/review` and `POST /api/review/end`; findings are `sai_lech` records ("Ghi nhận xét" form with `[QT|PĐ] [code]` prefix, close with a reason); `my_findings` on Tổng quan; rule warnings on draft save (`tree_too_early` shows on the spec form); print stylesheet. Tests: `test_rules.py` (`req_no_criterion`, `arch_multi_chosen`, `finding_no_owner` in `WARNING_CASES`), `test_server.py` (`test_review_*`, `test_end_review_*`, `test_overview_lists_my_open_findings_only`, `test_save_draft_returns_*too_early*`, `test_finding_without_a_node_saves`, role guards), `test_flow_predator.py::test_review_loop_two_users`. Checked by hand in a browser against the fake Teable (review screen, remark form, close with reason, end review; no console errors).
 - Design work only, NOT coded: `docs/UI-V2-SPEC.md` (4-pane inline-edit UI, Markdown notes, Hermes placeholder, keyboard model), mockup `docs/mockups/workspace-4-pane.{html,png}`.
 
 ## Next
@@ -22,6 +23,7 @@ Run the tests: `.\.venv\Scripts\python.exe -m pytest -o addopts="" -p no:cachepr
   weekly review view, findings stored in `sai_lech`, "my open findings" on Tổng quan, two new warnings plus the existing
   `tree_too_early` shown on forms; then pilot v1 with one named junior on a real project. The UI v2 questions below are
   no longer blocking.
+- **Next build step:** none left in the review design; the next step is the pilot (below).
 - **Viet to fill in:** pilot junior: ___ · project: ___ · reviewer: ___ · session 1 date: ___
 
 - Waiting on Viet before coding UI v2: answer the questions in `docs/UI-V2-SPEC.md` section 11 (four-pane layout replaces requirements section 8; inline edit vs the architecture-choice dialog; new table `ghi_chu` = 15 tables and a change to acceptance test 1; Markdown renderer; Hermes placeholder; whether pane 4 is context + notes + Hermes; all screens or only system design and node). Then write the acceptance tests of spec section 10 first.
@@ -45,6 +47,8 @@ Run the tests: `.\.venv\Scripts\python.exe -m pytest -o addopts="" -p no:cachepr
 - UI walk in headless Edge on Windows was a scratch script, not part of the repo tests.
 
 ## Departures
+
+- Review mode (9 Oct 2026): three new warnings not in requirements section 7 (`req_no_criterion`, `arch_multi_chosen`, `finding_no_owner`); a 12th screen `ra_soat` (section 8 lists 11); `sai_lech` is used for review findings and is written by the System designer (section 2 gives change cards to the PM; the PM may also cancel them); new `cai_dat` keys `chu_ky_ra_soat_ngay` (default 7, seeded by bootstrap) and `ngay_ra_soat_cuoi` (created by the first "Kết thúc rà soát", not seeded); `POST /api/draft` now returns `warnings`. "Kết thúc rà soát" only creates a draft: until it is committed the review date is local to that machine.
 
 - New field `nut.ma_kt` (ref `kien_truc`) and the rule that its rejected architecture deactivates the node: not in requirements section 4 or 7. Added on the user's instruction after the predator flow; needs approval.
 - `decision_tree.yaml` carries extra keys (`help`, top-level `guide`) beyond section 6; the loader ignores `guide` as a tree.

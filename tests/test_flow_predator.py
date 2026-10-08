@@ -939,3 +939,50 @@ def test_names_travel_with_every_screen_so_codes_are_never_shown_alone(flow: Flo
         assert names["yeu_cau"]["R2"] == expected["yeu_cau"] and names["kien_truc"]["KT-B"] == expected["kien_truc"]
     # drafts count too: a node that is only a draft is named
     assert f.env.get("/api/rows", table="nut")["names"]["nut"]["N0"] == "Predator"
+
+
+# ---- the weekly review loop (docs/designs/review-first-pilot.md) -------------------------------
+
+
+def test_review_loop_two_users(flow: Flow) -> None:
+    """The reviewer writes a finding, the junior sees and closes it, the next review shows the change."""
+    f = flow
+    step1_requirements(f)
+    f.add("yeu_cau", "R3", {"mo_ta": "Survive winter", "muc": MUST, "uu_tien": "M", "trang_thai": "Nháp"})  # no criterion
+    f.commit()
+
+    # An (System designer): the review lists R3 in the system group, before any tree exists
+    review = f.env.get("/api/review")
+    system = next(g for g in review["groups"] if g["owner"] == "")
+    assert any(w["code"] == "req_no_criterion" and w["key"] == "R3" for w in system["warnings"])
+    f.save("sai_lech", {"ma_sl": f.new_id("sai_lech"), "ngay": TODAY.isoformat(), "mo_ta": "[PĐ] [R3] Ghi tiêu chí đo được",
+                        "nguoi_nhan": "binh", "han": "2026-10-12", "trang_thai": "Mở"})  # no ma_nut: no tree yet
+    f.commit()
+    status, ended = f.env.post("/api/review/end")
+    assert status == 200 and ended["draft"]["table"] == "cai_dat"
+    f.commit()
+    stamp = f.env.get("/api/review")["since"]
+    assert stamp.endswith("Z") and all(not g["changed"] for g in f.env.get("/api/review")["groups"])
+
+    # Binh (Designer): the finding is on Tổng quan, can be closed, cannot be cancelled
+    f.env.set_identity("binh", "designer")
+    mine = f.env.get("/api/overview")["my_findings"]
+    assert [x["key"] for x in mine] == ["SL-001"] and "[R3]" in mine[0]["text"]
+    row = f.row("sai_lech", "SL-001")
+    base = {"table": "sai_lech", "op": "update", "key": "SL-001", "record_id": row["record_id"],
+            "base_modified": row["modified"], "base_fields": row["base"]}
+    status, data = f.env.post("/api/draft", {**base, "fields": {"trang_thai": "Hủy"}})
+    assert status == 403 and data["error"]["code"] == "role_required"
+    f.update("yeu_cau", "R3", {"tieu_chi_nghiem_thu": "Thử ở -20 °C trong 48 giờ"})
+    f.update("sai_lech", "SL-001", {"trang_thai": "Xong", "mo_ta": row["fields"]["mo_ta"] + " -- Đóng: đã bổ sung tiêu chí"})
+    f.commit()
+    assert f.env.get("/api/overview")["my_findings"] == []
+
+    # An, next week: nothing open, and both of Binh's edits show as changed since the last review
+    f.env.set_identity("an", "system_designer")
+    assert f.env.post("/api/refresh")[0] == 200
+    after = f.env.get("/api/review")
+    assert after["findings"] == [] and after["since"] == stamp
+    changed = {(c["table"], c["key"]) for g in after["groups"] for c in g["changed"]}
+    assert {("yeu_cau", "R3"), ("sai_lech", "SL-001")} <= changed
+    assert not any(w["code"] == "req_no_criterion" for g in after["groups"] for w in g["warnings"])

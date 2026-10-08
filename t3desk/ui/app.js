@@ -501,6 +501,11 @@ async function openForm(opts) {
     if (spec.id.kind === 'composite' && name === idName) continue; // built by the app from other fields
     const readonly = name === idName && isUpdate;
     const el = widget(table, name, fs, values[name], refIds[fs.ref], readonly);
+    if (opts.pickers && opts.pickers[name] && !readonly) {  // a list of known names; typing a new one is still allowed
+      const dl = h('datalist', { id: 'dl-pick-' + name }, opts.pickers[name].map((v) => h('option', { value: v })));
+      el.setAttribute('list', 'dl-pick-' + name);
+      el._datalist = dl;
+    }
     inputs[name] = el;
     let labelText = fieldLabel(table, name);
     if (table === 'cai_dat' && name === 'gia_tri' && settingLabel(values.khoa)) labelText = settingLabel(values.khoa);
@@ -543,8 +548,9 @@ async function openForm(opts) {
     } else {
       body = { table, op: 'create', fields, draft_id: isCreateDraft ? row.draft : undefined };
     }
+    let saved;
     try {
-      await api('/api/draft', { body });
+      saved = await api('/api/draft', { body });
     } catch (e) {
       const err = e instanceof ApiFail ? e.err : {};
       if (err.code === 'invalid' && err.issues) {
@@ -558,7 +564,8 @@ async function openForm(opts) {
     }
     delete S.tableCache[table];
     closeModal();
-    toast(T('draft_saved'));
+    const notes = [...new Set((saved.warnings || []).map((w) => w.text))];
+    toast(T('draft_saved'), notes.length ? T('draft_warnings') + ': ' + notes.join(' / ') : '');
     await refreshAll();
   };
   S.form = { save };
@@ -640,9 +647,121 @@ SCREENS.tong_quan = async (box) => {
       h('b', { text: w.key || tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ', w.text)))
     : h('p', { class: 'muted', text: T('ov_none') }));
   box.appendChild(h('p', { class: 'muted', text: T('ov_total_warnings', { n: data.total_warnings }) }));
+  box.appendChild(h('h2', { text: T('ov_my_findings') + ' (' + data.my_findings.length + ')' }));
+  box.appendChild(data.my_findings.length
+    ? h('ul', { class: 'plain', id: 'my-findings' }, data.my_findings.map(findingRow))
+    : h('p', { class: 'muted', text: T('ov_none') }));
   box.appendChild(h('h2', { text: T('ov_my_tasks') }));
   box.appendChild(data.tasks.length ? h('ul', { class: 'plain' }, data.tasks.map((t) =>
     h('li', null, h('b', { text: t.key }), ' ' + t.title + (t.due ? ' - ' + t.due : '')))) : h('p', { class: 'muted', text: T('ov_none') }));
+};
+
+/* ---------- weekly review (docs/designs/review-first-pilot.md) ---------- */
+
+function canRetireFinding() {
+  return S.meta.retire_roles.includes((S.st || {}).role);
+}
+
+/** One open finding with its actions: the assignee marks it done; the reviewer may also cancel it. */
+function findingRow(f) {
+  const bits = [f.text];
+  if (f.owner) bits.push(T('rv_assigned', { who: f.owner }));
+  if (f.due) bits.push(T('rv_due', { date: f.due }));
+  return h('li', { 'data-finding': f.key, class: 'finding' }, h('b', { text: f.key }), ' ' + bits.join(' - ') + ' ',
+    h('button', { class: 'btn small no-print', type: 'button', text: T('btn_finding_done'), onclick: () => closeFinding(f, S.meta.values.change_done) }),
+    canRetireFinding()
+      ? h('button', { class: 'btn small no-print', type: 'button', text: T('btn_finding_cancel'), onclick: () => closeFinding(f, S.meta.values.cancelled) })
+      : null);
+}
+
+/** Close a finding with a reason appended to its text (retire with a reason, never delete). */
+async function closeFinding(f, status) {
+  const reason = h('textarea', { id: 'close-reason', rows: '3' });
+  const err = h('div', { class: 'err' });
+  modal(T('rv_close_title', { key: f.key }), [h('label', { for: 'close-reason', text: T('rv_close_reason') }), reason, err], [
+    h('button', { class: 'btn', type: 'button', text: T('btn_cancel'), onclick: closeModal }),
+    h('button', { class: 'btn primary', type: 'button', id: 'btn-close-ok', text: T('btn_save_draft'), onclick: async () => {
+      if (!reason.value.trim()) { err.textContent = T('rv_reason_needed'); return; }
+      try {
+        delete S.tableCache.sai_lech;
+        const rows = await getRows('sai_lech');
+        const row = rows.rows.find((r) => r.key === f.key);
+        if (!row) throw new Error(f.key);
+        const text = (row.fields.mo_ta || f.text) + ' -- ' + T('rv_close_marker') + ': ' + reason.value.trim();
+        await api('/api/draft', { body: { table: 'sai_lech', op: 'update', key: f.key, record_id: row.record_id,
+          base_modified: row.modified, base_fields: row.base || row.fields, draft_id: row.draft || undefined,
+          fields: { trang_thai: status, mo_ta: text } } });
+      } catch (e) { showError(e); return; }
+      closeModal();
+      delete S.tableCache.sai_lech;
+      toast(T('draft_saved'));
+      await refreshAll();
+    } }),
+  ]);
+}
+
+/** Ask which kind of remark it is, then open the finding form with the row's defaults filled in. */
+function addNote(ctx, review) {
+  const radio = (value, key, on) => h('label', { class: 'radio' },
+    h('input', { type: 'radio', name: 'rv-kind', value, checked: on }), ' ' + T(key));
+  const rule = radio('rule', 'rv_kind_rule', false);
+  const judgment = radio('judgment', 'rv_kind_judgment', true);
+  const owners = review.groups.map((g) => g.owner).filter(Boolean);
+  modal(T('btn_note'), [h('p', { class: 'muted', text: T('rv_kind') }), rule, judgment], [
+    h('button', { class: 'btn', type: 'button', text: T('btn_cancel'), onclick: closeModal }),
+    h('button', { class: 'btn primary', type: 'button', id: 'btn-note-ok', text: T('btn_continue'), onclick: () => {
+      const kind = rule.querySelector('input').checked ? 'rv_tag_rule' : 'rv_tag_judgment';
+      const due = new Date(Date.now() + review.cycle_days * 86400000).toISOString().slice(0, 10);
+      closeModal();
+      openForm({ table: 'sai_lech', pickers: { nguoi_nhan: owners }, prefill: {
+        ma_nut: ctx.node || '', nguoi_nhan: ctx.owner || '', ngay: new Date().toISOString().slice(0, 10), han: due,
+        mo_ta: '[' + T(kind) + '] ' + (ctx.code ? '[' + ctx.code + '] ' : ''), trang_thai: S.meta.values.change_open } });
+    } }),
+  ]);
+}
+
+SCREENS.ra_soat = async (box) => {
+  const data = await api('/api/review');
+  const canEnd = (S.st || {}).role === 'system_designer';
+  const note = (ctx) => h('button', { class: 'btn small no-print', type: 'button', text: T('btn_note'), onclick: () => addNote(ctx, data) });
+  box.appendChild(h('h1', { text: T('nav_ra_soat') }));
+  box.appendChild(h('div', { class: 'toolbar no-print' },
+    h('button', { class: 'btn primary', type: 'button', id: 'btn-end-review', text: T('btn_end_review'), disabled: !canEnd,
+      title: canEnd ? '' : T('role_needed'), onclick: () => guard(async () => {
+        await api('/api/review/end', { body: {} });
+        toast(T('review_ended'));
+        await refreshAll();
+      }) }),
+    h('button', { class: 'btn', type: 'button', id: 'btn-print', text: T('btn_print'), onclick: () => window.print() }),
+    h('span', { class: 'muted', text: T('rv_since', { since: data.since }) })));
+  box.appendChild(h('div', { class: 'counters', id: 'counters' }, data.counters.map((c) =>
+    h('div', { class: 'counter ' + (c.value ? 'bad' : 'good'), 'data-counter': c.name }, h('b', { text: String(c.value) }), c.text))));
+  box.appendChild(h('h2', { text: T('rv_findings') + ' (' + data.findings.length + ')' }));
+  box.appendChild(data.findings.length ? h('ul', { class: 'plain', id: 'review-findings' }, data.findings.map(findingRow))
+    : h('p', { class: 'muted', text: T('ov_none') }));
+  for (const g of data.groups) {
+    if (!g.leaves.length && !g.warnings.length && !g.changed.length && g.owner) continue;
+    const sec = h('section', { class: 'review-group', 'data-owner': g.owner },
+      h('h2', null, g.owner || T('rv_group_system'), ' ', note({ owner: g.owner })));
+    if (g.leaves.length) {
+      sec.appendChild(h('h3', { text: T('rv_leaves') }));
+      sec.appendChild(h('ul', { class: 'plain' }, g.leaves.map((l) =>
+        h('li', null, h('b', { text: l.code }), ' ' + l.name + ' - ' + l.next + ' ', note({ node: l.code, owner: g.owner, code: l.code })))));
+    }
+    if (g.warnings.length) {
+      sec.appendChild(h('h3', { text: T('rv_warnings') + ' (' + g.warnings.length + ')' }));
+      sec.appendChild(h('ul', { class: 'plain' }, g.warnings.map((w) =>
+        h('li', null, h('b', { text: w.key || tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ' + w.text + ' ',
+          note({ node: w.node || '', owner: g.owner, code: w.key })))));
+    }
+    if (g.changed.length) {
+      sec.appendChild(h('h3', { text: T('rv_changed') + ' (' + g.changed.length + ')' }));
+      sec.appendChild(h('ul', { class: 'plain' }, g.changed.map((c) =>
+        h('li', null, h('b', { text: c.key }), ' (' + tableLabel(c.table) + ') ',
+          note({ node: c.node, owner: g.owner, code: c.key })))));
+    }
+    box.appendChild(sec);
+  }
 };
 
 SCREENS.yeu_cau = async (box) => {
