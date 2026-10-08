@@ -81,9 +81,10 @@ tables:
     fields:
       ma_nut: {type: text, unique: true, notNull: true, required: true}
       ma_cha: {type: text, ref: nut}
-      ten: {type: text, required: true}
+      ma_hm: {type: text, ref: hang_muc}  # the library item placed here; its name, function and kind replace the three fields below
+      ten: {type: text}       # own name, used only when no library item is linked (a warning shows when both are empty)
       chuc_nang: {type: longtext}
-      loai: {type: choice, required: true, choices: ["Hệ thống", "Cụm", "Mua OEM", "Tự chế tạo", "Phần mềm", "Dịch vụ"]}
+      loai: {type: choice, choices: ["Hệ thống", "Cụm", "Mua OEM", "Tự chế tạo", "Phần mềm", "Dịch vụ"]}
       so_luong: {type: number, min: 0}
       phu_trach: {type: text}
       ma_kt: {type: text, ref: kien_truc}  # option this node belongs to; empty = every option. A node of a rejected option (Loại) is not active
@@ -257,6 +258,25 @@ tables:
       nguoi_viet: {type: text, required: true}
       noi_dung: {type: longtext, required: true}
       trang_thai: {type: choice, required: true, default: "Mở", choices: ["Mở", "Đã sửa", "Hủy"]}
+
+  # The project library: parts, sub-systems and systems that can be placed in any architecture (nut.ma_hm).
+  # A placeholder is a quick entry (name only) given to someone to fill in later.
+  hang_muc:
+    id_field: ma_hm
+    id: {kind: number, prefix: "HM-", pad: 3, pattern: '^HM-\d{3,}$', example: HM-001}
+    fields:
+      ma_hm: {type: text, unique: true, notNull: true, required: true}
+      ten: {type: text, required: true}
+      cap: {type: choice, required: true, default: "Hệ con", choices: ["Hệ thống", "Hệ con", "Linh kiện"]}
+      loai: {type: choice, choices: ["Hệ thống", "Cụm", "Mua OEM", "Tự chế tạo", "Phần mềm", "Dịch vụ"]}
+      chuc_nang: {type: longtext}
+      hang: {type: text}
+      model: {type: text}
+      sku: {type: text}
+      link_datasheet: {type: text}
+      trang_thai: {type: choice, required: true, default: "Chỗ giữ chỗ", choices: ["Chỗ giữ chỗ", "Đang điền", "Đã điền", "Ngưng dùng"]}
+      nguoi_dien: {type: text}
+      ghi_chu: {type: longtext}
 
 # Rows written to cai_dat by bootstrap if the key is missing (never overwritten).
 # "$project_name" is replaced by the project name given to bootstrap.

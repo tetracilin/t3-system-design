@@ -65,6 +65,8 @@ function buildGrid(table, data, o) {
   function readonly(r, c) {
     const name = nameOfCol(c);
     if (!name) return true;
+    const placed = rowAt(r);
+    if (placed && placed.effective && placed.effective[name] !== undefined) return true; // supplied by the library item
     if (name === idName) {
       if (kind === 'composite') return true; // built from its parts
       const row = rowAt(r);
@@ -106,14 +108,16 @@ function buildGrid(table, data, o) {
       const tr = h('tr', { 'data-key': row.key, class: row.draft ? 'is-draft' : '' });
       const rn = h('td', { class: 'rn' }, String(r + 1), row.draft ? h('span', { class: 'mark', title: T('draft_mark'), text: ' ✎' }) : null,
         row.warnings && row.warnings.length ? h('span', { class: 'badge warn', title: row.warnings.join('\n'), text: '! ' + row.warnings.length }) : null,
-        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: row.key }), text: '✉ ' + row.notes }) : null);
+        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: withName(table, row.key) }), text: '✉ ' + row.notes }) : null);
       tr.appendChild(rn);
       if (opts.actions) tr.appendChild(h('td', { class: 'act' }, opts.actions(row) || null)); // right after the row number: always in view
       names.forEach((name, c) => {
         const bad = issues.filter((i) => i.field === name);
         const td = h('td', { 'data-col': name, class: 'cell' + (readonly(r, c) ? ' ro' : '') + (bad.length ? ' err' : ''),
           title: bad.map((i) => T('v_' + i.code) + ' - ' + i.message).join('\n') });
-        td.appendChild(gridCell(table, name, spec.fields[name], row.fields[name]));
+        const fromLibrary = row.effective && row.effective[name] !== undefined;
+        td.appendChild(gridCell(table, name, spec.fields[name], fromLibrary ? row.effective[name] : row.fields[name]));
+        if (fromLibrary) td.title = T('grid_from_library');
         td.addEventListener('mousedown', () => { g.select(r, c); });
         td.addEventListener('dblclick', () => g.startEdit(null));
         tr.appendChild(td);
@@ -147,7 +151,7 @@ function buildGrid(table, data, o) {
 
   function paintMessages() {
     const all = [];
-    for (const row of g.view) for (const i of issuesOf(row)) all.push(row.key + ': ' + fieldLabel(table, i.field) + ' - ' + issueText(i));
+    for (const row of g.view) for (const i of issuesOf(row)) all.push(withName(table, row.key) + ': ' + fieldLabel(table, i.field) + ' - ' + issueText(i));
     g.msg.textContent = '';
     if (all.length) {
       g.msg.appendChild(h('span', { class: 'badge warn', text: T('grid_issues', { n: all.length }) }));

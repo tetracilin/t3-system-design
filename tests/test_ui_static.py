@@ -121,6 +121,7 @@ SAMPLES = {
     "row_new": ({"ctrlKey": True, "shiftKey": True, "key": "Enter"}, {}),
     "tabs": ({"ctrlKey": True, "key": "PageDown"}, {}),
     "row_discard": ({"altKey": True, "key": "Backspace"}, {"inGrid": True}),
+    "library_focus": ({"altKey": True, "key": "l"}, {}),
     "note_focus": ({"key": "n"}, {}),
     "note_save": ({"ctrlKey": True, "key": "Enter"}, {"inNote": True}),
     "note_preview": ({"altKey": True, "key": "p"}, {}),

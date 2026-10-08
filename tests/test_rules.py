@@ -560,6 +560,46 @@ def n_finding_owner(t: Tables) -> None:
     t["sai_lech"].append({"ma_sl": "SL-002", "mo_ta": "x", "trang_thai": "Xong"})  # closed needs no owner
 
 
+def add_item(t: Tables, key: str = "HM-001", **fields: Any) -> dict[str, Any]:
+    item = {"ma_hm": key, "ten": "Hydrophone HTI-96", "cap": "Linh kiện", "loai": "Mua OEM", "trang_thai": "Đã điền",
+            "nguoi_dien": "an", "hang": "High Tech", "model": "HTI-96-MIN"}
+    item.update(fields)
+    t.setdefault("hang_muc", []).append(item)
+    return item
+
+
+def t_lib_unassigned(t: Tables) -> None:
+    add_item(t, trang_thai="Chỗ giữ chỗ", nguoi_dien=None)
+
+
+def n_lib_unassigned(t: Tables) -> None:
+    add_item(t, "HM-001", trang_thai="Chỗ giữ chỗ", nguoi_dien="binh")  # assigned
+    add_item(t, "HM-002", trang_thai="Đang điền", nguoi_dien=None)      # only a placeholder must have someone
+    add_item(t, "HM-003", trang_thai="Ngưng dùng", nguoi_dien=None)     # retired
+
+
+def t_lib_oem(t: Tables) -> None:
+    add_item(t, hang="High Tech", model=None, sku=None)
+
+
+def n_lib_oem(t: Tables) -> None:
+    add_item(t, "HM-001", model=None, sku="SKU-9")                      # a SKU is enough
+    add_item(t, "HM-002", hang=None, model=None, trang_thai="Đang điền")  # not yet declared done
+    add_item(t, "HM-003", loai="Tự chế tạo", hang=None, model=None)    # not an OEM part
+
+
+def t_node_no_name(t: Tables) -> None:
+    add_node(t, "N1.3", "N1", "binh")
+    row(t, "nut", "ma_nut", "N1.3")["ten"] = None
+
+
+def n_node_no_name(t: Tables) -> None:
+    add_item(t, "HM-001")
+    add_node(t, "N1.3", "N1", "binh")
+    node = row(t, "nut", "ma_nut", "N1.3")
+    node["ten"], node["ma_hm"] = None, "HM-001"  # the name comes from the library item
+
+
 def t_alloc_dup(t: Tables) -> None:
     t["phan_bo"].append({"ma_pb": "PB-012", "ma_yc": "R1", "ma_nut": "N1.1", "kieu": "Mỗi nút phải đạt"})
 
@@ -813,6 +853,9 @@ WARNING_CASES: dict[str, tuple[Mutator, set[str], Mutator]] = {
     "arch_too_few": (t_arch_few, {""}, n_arch_few),
     "arch_no_reason": (t_arch_reason, {"KT-B"}, n_arch_reason),
     "arch_multi_chosen": (t_arch_multi, {"KT-A", "KT-B"}, n_arch_multi),
+    "lib_unassigned": (t_lib_unassigned, {"HM-001"}, n_lib_unassigned),
+    "lib_oem_incomplete": (t_lib_oem, {"HM-001"}, n_lib_oem),
+    "node_no_name": (t_node_no_name, {"N1.3"}, n_node_no_name),
     "req_no_criterion": (t_req_criterion, {"R3"}, n_req_criterion),
     "finding_no_owner": (t_finding_owner, {"SL-001"}, n_finding_owner),
     "alloc_duplicate": (t_alloc_dup, {"PB-001", "PB-012"}, n_alloc_dup),
@@ -997,3 +1040,58 @@ def test_leaves_of_a_rejected_architecture_are_not_active():
     assert set(r.analyse(tables).leaves) == {"N2"}
     tables["kien_truc"][1]["trang_thai"] = "Đề xuất"
     assert set(r.analyse(tables).leaves) == {"N1.1", "N2"}
+
+
+# ---- the library (docs: one item can be placed in many places) ---------------------------------
+
+
+def linked(t: Tables, node: str, item: str = "HM-001", **node_fields: Any) -> None:
+    row(t, "nut", "ma_nut", node)["ma_hm"] = item
+    row(t, "nut", "ma_nut", node).update(node_fields)
+
+
+def test_a_node_takes_its_name_function_and_kind_from_its_library_item() -> None:
+    t = build()
+    add_item(t, ten="Hydrophone HTI-96", chuc_nang="Thu âm dưới nước")
+    linked(t, "N1.1", ten="tên cũ trên nút")
+    a = analyse(t)
+    assert a.node_name("N1.1") == "Hydrophone HTI-96"
+    assert a.nodes["N1.1"]["chuc_nang"] == "Thu âm dưới nước" and a.node_loai("N1.1") == "Mua OEM"
+    assert row(t, "nut", "ma_nut", "N1.1")["ten"] == "tên cũ trên nút"  # what is stored is not changed
+
+
+def test_a_node_without_an_item_keeps_its_own_name_and_kind() -> None:
+    a = analyse(build())
+    assert a.node_name("N1.1") == "Hydrophone" and a.node_loai("N1.1") == "Mua OEM" and a.node_name("N9") == ""
+
+
+def test_an_item_with_no_name_or_kind_yet_falls_back_to_what_the_node_has() -> None:
+    t = build()
+    add_item(t, ten=None, loai=None)
+    linked(t, "N2.1")
+    a = analyse(t)
+    assert a.node_name("N2.1") == "Vỏ bể" and a.node_loai("N2.1") == "Tự chế tạo"
+
+
+def test_the_kind_of_the_item_decides_how_many_candidates_a_leaf_needs() -> None:
+    t = build()
+    assert analyse(t).min_candidates("N2.1") == 1  # a self-made part needs one candidate
+    add_item(t, loai="Mua OEM")
+    linked(t, "N2.1")
+    assert analyse(t).min_candidates("N2.1") == 3  # the same slot filled with an OEM item needs three
+
+
+def test_the_places_of_an_item_are_listed() -> None:
+    t = build()
+    add_item(t)
+    linked(t, "N1.1")
+    linked(t, "N4")
+    a = analyse(t)
+    assert a.places("HM-001") == ["N1.1", "N4"] and a.places("HM-404") == []
+
+
+def test_a_node_pointing_at_a_missing_item_uses_its_own_name() -> None:
+    t = build()
+    row(t, "nut", "ma_nut", "N1.1")["ma_hm"] = "HM-404"
+    a = analyse(t)
+    assert a.node_name("N1.1") == "Hydrophone"

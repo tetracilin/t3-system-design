@@ -23,6 +23,8 @@ For the first session with one junior on one real project. About 90 minutes. The
 | 5 | "Add a note to one specification." | Notes in pane 4, author shown |
 | 6 | "Send your work to Teable." | Commit screen, failed draft message, conflict if two people use it |
 | 7 | "Find what you should do next." | Decision tree checklist, `?` shortcut list, Ctrl+K |
+| 8 | "Your architecture has these sub-systems: ... Prepare them for your colleague to fill in." | Library: "Tạo khung", placeholder, assignee, "Hạng mục thư viện cần điền" |
+| 9 | "Add a part that another architecture already uses." | Library search, reuse by Enter or drag, "dùng n chỗ" |
 
 Reviewer-only (afterwards): run "Rà soát tuần", write two findings (`QT` = a rule could have caught it, `PĐ` = needed
 judgment), end the review, and check the junior sees the findings on "Tổng quan".

@@ -68,6 +68,13 @@ const SHORTCUTS = [
   { id: 'gate', keys: 'Space', label: 'sc_gate',
     match: (ev) => ev.key === ' ' && !!ev.target && !!ev.target.dataset && !!ev.target.dataset.gate,
     run: () => { /* a focused gate switch toggles natively; this entry documents it */ } },
+  { id: 'library_focus', keys: 'Alt+L', label: 'sc_library',
+    match: (ev) => ev.altKey && !ev.shiftKey && (ev.key === 'l' || ev.key === 'L'),
+    run: () => {
+      const el = document.getElementById('lib-search') || document.getElementById('lib-new');
+      if (el) { el.focus(); return; }
+      go('thu_vien');
+    } },
   // table (pane 3)
   { id: 'cell_move', keys: '← ↑ ↓ →, Tab, Shift+Tab', label: 'sc_cell_move',
     match: (ev, c) => c.inGrid && (isKey(ev, 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab') && !withMod(ev) && !ev.altKey)

@@ -22,7 +22,7 @@ import yaml
 DATA_DIR = Path(__file__).parent / "data"
 TABLES = (
     "yeu_cau", "kien_truc", "nut", "phan_bo", "thong_so", "ung_vien", "doi_chieu",
-    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec", "ghi_chu",
+    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec", "ghi_chu", "hang_muc",
 )
 
 
@@ -52,6 +52,13 @@ class V:
     SOURCING_NOT_ASKED = "Chưa hỏi"
     CHANGE_OPEN = "Mở"
     CHANGE_DONE = "Xong"
+    LIB_PLACEHOLDER = "Chỗ giữ chỗ"
+    LIB_FILLING = "Đang điền"
+    LIB_DONE = "Đã điền"
+    LIB_RETIRED = "Ngưng dùng"
+    CAP_SYSTEM = "Hệ thống"
+    CAP_SUB = "Hệ con"
+    CAP_PART = "Linh kiện"
     MILESTONE = "G4a"
 
 
@@ -181,9 +188,14 @@ class Analysis:
         self.settings: dict[str, str] = {
             _s(r.get("khoa")): _s(r.get("gia_tri")) for r in self.t["cai_dat"] if _s(r.get("khoa"))
         }
+        self.library: dict[str, dict[str, Any]] = {
+            _s(r.get("ma_hm")): r for r in self.t["hang_muc"] if _s(r.get("ma_hm"))
+        }
         self.nodes: dict[str, dict[str, Any]] = {}
         for row in self.t["nut"]:
-            self.nodes.setdefault(_s(row.get("ma_nut")), row)
+            code = _s(row.get("ma_nut"))
+            if code not in self.nodes:
+                self.nodes[code] = self._effective(row)
         self.parent_codes = {_s(r.get("ma_cha")) for r in self.t["nut"] if _s(r.get("ma_cha"))}
         self.children: dict[str, list[str]] = defaultdict(list)
         for code, row in self.nodes.items():
@@ -204,6 +216,27 @@ class Analysis:
         self._result_cache: dict[str, str] = {}
         self._next_cache: dict[str, NextAction] = {}
         self._warnings: list[Warn] | None = None
+
+    def _effective(self, row: dict[str, Any]) -> dict[str, Any]:
+        """A node as the rules see it: name, function and kind come from its library item when it has one."""
+        item = self.library.get(_s(row.get("ma_hm")))
+        if item is None:
+            return row
+        eff = dict(row)
+        for name in ("ten", "chuc_nang", "loai"):
+            if _s(item.get(name)):
+                eff[name] = item[name]
+        return eff
+
+    def node_name(self, code: str) -> str:
+        return _s(self.nodes.get(code, {}).get("ten"))
+
+    def node_loai(self, code: str) -> str:
+        return _s(self.nodes.get(code, {}).get("loai"))
+
+    def places(self, item: str) -> list[str]:
+        """Nodes (places in an architecture) that use one library item, in table order."""
+        return [c for c, r in self.nodes.items() if _s(r.get("ma_hm")) == item]
 
     def _inactive_nodes(self) -> set[str]:
         """Nodes tagged (ma_kt) with an architecture that is rejected, and everything below them."""
@@ -549,7 +582,7 @@ class Analysis:
             for part in (
                 self._req_warnings, self._tree_warnings, self._one_node_warnings, self._arch_warnings,
                 self._alloc_warnings, self._spec_warnings, self._cand_warnings,
-                self._check_warnings, self._sourcing_warnings, self._finding_warnings,
+                self._check_warnings, self._sourcing_warnings, self._finding_warnings, self._library_warnings,
             ):
                 out.extend(part())
             self._warnings = out
@@ -578,6 +611,8 @@ class Analysis:
                 out.append(self._w("tree_too_early", "nut", code, code))
             if self.gate(2) and self.is_leaf(code) and not _s(row.get("phu_trach")):
                 out.append(self._w("tree_leaf_no_owner", "nut", code, code))
+            if not _s(row.get("ten")):
+                out.append(self._w("node_no_name", "nut", code, code))
         return out
 
     def _one_node_warnings(self) -> list[Warn]:
@@ -613,6 +648,18 @@ class Analysis:
         chosen = [_s(r.get("ma_kt")) for r in rows if _s(r.get("trang_thai")) == V.ARCH_CHOSEN]
         if len(chosen) > 1:
             out.extend(self._w("arch_multi_chosen", "kien_truc", code) for code in chosen)
+        return out
+
+    def _library_warnings(self) -> list[Warn]:
+        """A placeholder nobody was asked to fill, and an OEM part declared done without its maker and model or SKU."""
+        out: list[Warn] = []
+        for item in self.t["hang_muc"]:
+            key, status = _s(item.get("ma_hm")), _s(item.get("trang_thai"))
+            if status == V.LIB_PLACEHOLDER and not _s(item.get("nguoi_dien")):
+                out.append(self._w("lib_unassigned", "hang_muc", key))
+            declared = _s(item.get("hang")) and (_s(item.get("model")) or _s(item.get("sku")))
+            if status == V.LIB_DONE and _s(item.get("loai")) == V.OEM and not declared:
+                out.append(self._w("lib_oem_incomplete", "hang_muc", key))
         return out
 
     def _finding_warnings(self) -> list[Warn]:

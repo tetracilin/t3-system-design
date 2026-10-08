@@ -174,7 +174,7 @@ def test_ui_files_have_no_vietnamese_literals_and_no_external_urls() -> None:
 
 def test_meta_carries_schema_labels_and_screens(env: Env) -> None:
     meta = env.get("/api/meta")
-    assert set(meta["screens"]) == set(server.SCREENS) and len(meta["screens"]) == 12 and "ra_soat" in meta["screens"]
+    assert set(meta["screens"]) == set(server.SCREENS) and len(meta["screens"]) == 13 and "thu_vien" in meta["screens"]
     assert "yeu_cau" in meta["schema"]["tables"] and meta["labels"]["ui"]["nav_commit"]
     assert meta["role_tree"]["designer"] == "designer"
 
@@ -212,7 +212,7 @@ def test_bootstrap_through_the_api_opens_a_project(tmp_path: Path, fake_teable: 
         app.dispatch("POST", "/api/settings", {}, {"teable_url": fake_teable.url, "token": "alice", "user": "an", "role": "pm"})
         status, data = app.dispatch("POST", "/api/bootstrap", {}, {"project_name": "Demo", "space_id": "spc1"})
         assert status == 200, data
-        assert len(data["table_ids"]) == 15
+        assert len(data["table_ids"]) == 16
         state = app.dispatch("GET", "/api/state", {}, None)[1]
         assert state["has_project"] and state["project"] == "Demo"
         assert app.dispatch("POST", "/api/bootstrap", {}, {})[1]["error"]["code"] == "need_base_or_name"
@@ -262,7 +262,7 @@ def test_overview_lists_my_leaves_counters_and_warnings(loaded: Env) -> None:
     assert counters["pairs_missing_spec"] == 1 and len(data["counters"]) == 7
     assert any(w["key"] == "PB-004" for w in data["warnings"])
     # regression contract (eng review R8): the keys the UI reads stay, my_findings is added
-    assert {"leaves", "counters", "warnings", "tasks", "total_warnings", "my_findings"} <= set(data)
+    assert {"leaves", "counters", "warnings", "tasks", "total_warnings", "my_findings", "my_items"} <= set(data)
 
 
 # ---- drafts -------------------------------------------------------------------
@@ -1088,3 +1088,183 @@ def test_rows_carry_code_to_name_maps_for_every_reference(loaded: Env) -> None:
     names = loaded.get("/api/rows", table="thong_so")["names"]
     assert names["yeu_cau"]["R1"] == "Độ nhạy" and names["nut"]["N1.1"] == "Hydrophone"
     assert {"nut", "yeu_cau", "ung_vien", "thong_so", "kien_truc", "moc"} <= set(names)
+
+
+# ---- the library and the breakdown (branch feature/breakdown-library) -----------------------------------
+
+LIB = [
+    {"ma_hm": "HM-001", "ten": "Hydrophone HTI-96", "cap": "Linh kiện", "loai": "Mua OEM", "trang_thai": "Đã điền",
+     "nguoi_dien": "an", "hang": "High Tech", "model": "HTI-96-MIN", "sku": "SKU-77"},
+    {"ma_hm": "HM-002", "ten": "Bộ nguồn", "cap": "Hệ con", "trang_thai": "Chỗ giữ chỗ", "nguoi_dien": "binh"},
+    {"ma_hm": "HM-003", "ten": "Vỏ chịu áp", "cap": "Linh kiện", "loai": "Tự chế tạo", "trang_thai": "Đang điền"},
+]
+
+
+def with_library(env: Env, **tweaks: Any) -> dict[str, Any]:
+    rows = build()
+    rows["hang_muc"] = [dict(x) for x in LIB]
+    for table, edit in tweaks.items():
+        edit(rows[table])
+    env.load_cache(rows)
+    return rows
+
+
+def link(rows: list[dict[str, Any]], node: str, item: str) -> None:
+    next(r for r in rows if r["ma_nut"] == node)["ma_hm"] = item
+
+
+def test_a_linked_node_shows_the_name_of_its_library_item_everywhere(loaded: Env) -> None:
+    with_library(loaded, nut=lambda rows: link(rows, "N1.1", "HM-001"))
+    data = loaded.get("/api/rows", table="nut")
+    assert data["names"]["nut"]["N1.1"] == "Hydrophone HTI-96" and data["names"]["hang_muc"]["HM-002"] == "Bộ nguồn"
+    row = next(r for r in data["rows"] if r["key"] == "N1.1")
+    assert row["effective"]["ten"] == "Hydrophone HTI-96" and row["fields"]["ten"] == "Hydrophone"  # stored value untouched
+    node = next(n for n in loaded.get("/api/tree_nodes")["nodes"] if n["code"] == "N1.1")
+    assert node["name"] == "Hydrophone HTI-96" and node["item"] == "HM-001" and node["arch"] == ""
+    assert next(r for r in data["rows"] if r["key"] == "N1.2")["effective"] == {}
+
+
+def test_library_search_matches_code_name_maker_model_and_sku(loaded: Env) -> None:
+    with_library(loaded)
+
+    def keys(**q: str) -> list[str]:
+        return [i["key"] for i in loaded.get("/api/library", **q)["items"]]
+
+    assert keys() == ["HM-001", "HM-002", "HM-003"]
+    assert keys(q="hm-002") == ["HM-002"] and keys(q="nguồn") == ["HM-002"] and keys(q="high tech") == ["HM-001"]
+    assert keys(q="hti-96-min") == ["HM-001"] and keys(q="sku-77") == ["HM-001"] and keys(q="zzz") == []
+
+
+def test_library_filters_by_kind_status_and_who_fills_it_and_counts_where_it_is_used(loaded: Env) -> None:
+    with_library(loaded, nut=lambda rows: (link(rows, "N1.1", "HM-001"), link(rows, "N4", "HM-001")))
+    data = loaded.get("/api/library")
+    first = data["items"][0]
+    assert first["used"] == 2 and first["places"] == ["N1.1", "N4"] and first["name"] == "Hydrophone HTI-96"
+    assert [i["key"] for i in loaded.get("/api/library", cap="Hệ con")["items"]] == ["HM-002"]
+    assert [i["key"] for i in loaded.get("/api/library", status="Đang điền")["items"]] == ["HM-003"]
+    loaded.set_identity("binh", "designer")
+    assert [i["key"] for i in loaded.get("/api/library", mine="1")["items"]] == ["HM-002"]
+    assert {"an", "binh"} <= set(data["people"])
+
+
+def test_adding_a_library_item_places_it_without_copying_its_data(loaded: Env) -> None:
+    with_library(loaded)
+    status, data = loaded.post("/api/breakdown/add", {"item": "HM-001", "parent": "N2"})
+    assert status == 200, data
+    assert data["node"] == "N2.3" and data["item"] == "HM-001" and data["created_item"] is False
+    row = next(r for r in loaded.get("/api/rows", table="nut")["rows"] if r["key"] == "N2.3")
+    assert row["fields"]["ma_cha"] == "N2" and row["fields"]["ma_hm"] == "HM-001" and "ten" not in row["fields"]
+    assert row["effective"]["ten"] == "Hydrophone HTI-96" and loaded.app.store.count_drafts() == 1
+    again = loaded.post("/api/breakdown/add", {"item": "HM-001", "parent": "N2"})[1]  # the same part can be used twice
+    assert again["node"] == "N2.4"
+    assert loaded.get("/api/library")["items"][0]["used"] == 2
+
+
+def test_a_quick_placeholder_is_created_assigned_and_placed_in_one_step(loaded: Env) -> None:
+    with_library(loaded)
+    status, data = loaded.post("/api/breakdown/add", {"new": {"ten": "Cảm biến áp suất", "nguoi_dien": "binh"}, "parent": "N2"})
+    assert status == 200, data
+    assert data["created_item"] is True and data["item"] == "HM-004" and data["node"] == "N2.3"
+    item = next(i for i in loaded.get("/api/library")["items"] if i["key"] == "HM-004")
+    assert item["status"] == "Chỗ giữ chỗ" and item["owner"] == "binh" and item["cap"] == "Linh kiện"  # level 2 = component
+    sub = loaded.post("/api/breakdown/add", {"new": {"ten": "Khoang điện"}, "parent": "N0"})[1]
+    assert next(i for i in loaded.get("/api/library")["items"] if i["key"] == sub["item"])["cap"] == "Hệ con"  # level 1
+    assert loaded.app.store.count_drafts() == 4  # two items and two placements, all still drafts
+
+
+def test_the_third_level_is_the_last_and_unknown_things_are_refused_with_nothing_saved(loaded: Env) -> None:
+    with_library(loaded)
+    status, data = loaded.post("/api/breakdown/add", {"item": "HM-001", "parent": "N2.1"})
+    assert status == 422 and data["error"]["code"] == "too_deep"
+    assert loaded.post("/api/breakdown/add", {"item": "HM-404", "parent": "N2"})[1]["error"]["code"] == "no_item"
+    assert loaded.post("/api/breakdown/add", {"item": "HM-001", "parent": "N99"})[1]["error"]["code"] == "no_parent"
+    status, data = loaded.post("/api/breakdown/add", {"new": {"ten": "x", "cap": "Không có"}, "parent": "N2"})
+    assert status == 422 and data["error"]["code"] == "invalid"
+    assert loaded.app.store.count_drafts() == 0  # the half-made item was rolled back
+
+
+def test_a_new_node_belongs_to_the_option_of_its_parent_unless_told_otherwise(loaded: Env) -> None:
+    with_library(loaded, nut=lambda rows: next(r for r in rows if r["ma_nut"] == "N2").update({"ma_kt": "KT-B"}))
+    node = loaded.post("/api/breakdown/add", {"item": "HM-003", "parent": "N2"})[1]["node"]
+    other = loaded.post("/api/breakdown/add", {"item": "HM-003", "parent": "N2", "ma_kt": "KT-A"})[1]["node"]
+    rows = {r["key"]: r["fields"] for r in loaded.get("/api/rows", table="nut")["rows"]}
+    assert rows[node]["ma_kt"] == "KT-B" and rows[other]["ma_kt"] == "KT-A"
+
+
+def scaffold_env(env: Env, names: str) -> None:
+    rows = build()
+    rows["kien_truc"][0]["he_con_cap1"] = names
+    env.load_cache(rows)
+
+
+def test_an_architecture_creates_placeholders_for_its_sub_systems_and_reuses_existing_items(loaded: Env) -> None:
+    scaffold_env(loaded, "Bộ nguồn; Khoang điện\nHệ thủy động")
+    loaded.draft("hang_muc", {"ma_hm": "HM-001", "ten": "Bộ nguồn", "cap": "Hệ con", "trang_thai": "Đang điền"})
+    status, data = loaded.post("/api/architecture/scaffold", {"ma_kt": "KT-A"})
+    assert status == 200, data
+    assert len(data["created"]) == 3 and data["root"] == "N0" and data["items_created"] == 2  # HM-001 was reused
+    nodes = {r["key"]: r["fields"] for r in loaded.get("/api/rows", table="nut")["rows"] if r["draft"]}
+    assert {f["ma_kt"] for f in nodes.values()} == {"KT-A"} and {f["ma_cha"] for f in nodes.values()} == {"N0"}
+    assert sorted(f["ma_hm"] for f in nodes.values()).count("HM-001") == 1
+    new_items = [i for i in loaded.get("/api/library")["items"] if i["status"] == "Chỗ giữ chỗ"]
+    assert len(new_items) == 2 and all(i["owner"] == "" for i in new_items)  # waiting for someone to be assigned
+
+
+def test_the_scaffold_can_be_repeated_without_duplicates(loaded: Env) -> None:
+    scaffold_env(loaded, "Bộ nguồn; Khoang điện")
+    first = loaded.post("/api/architecture/scaffold", {"ma_kt": "KT-A"})[1]
+    again = loaded.post("/api/architecture/scaffold", {"ma_kt": "KT-A"})[1]
+    assert len(first["created"]) == 2 and again["created"] == [] and sorted(again["existing"]) == sorted(first["created"])
+
+
+def test_the_scaffold_makes_the_root_system_when_the_project_has_none(env: Env) -> None:
+    env.set_identity("an", "system_designer")
+    assert env.draft("kien_truc", {"ma_kt": "KT-A", "ten": "Một bể", "trang_thai": "Đề xuất", "he_con_cap1": "Bộ nguồn"})[0] == 200
+    data = env.post("/api/architecture/scaffold", {"ma_kt": "KT-A"})[1]
+    assert data["root"] == "N0" and len(data["created"]) == 1
+    nodes = {n["code"]: n for n in env.get("/api/tree_nodes")["nodes"]}
+    assert nodes["N0"]["arch"] == "" and nodes[data["created"][0]]["arch"] == "KT-A"
+
+
+def test_the_scaffold_needs_an_architecture_with_sub_systems_written_down(loaded: Env) -> None:
+    assert loaded.post("/api/architecture/scaffold", {"ma_kt": "KT-Z"})[1]["error"]["code"] == "no_row"
+    assert loaded.post("/api/architecture/scaffold", {"ma_kt": "KT-A"})[1]["error"]["code"] == "nothing_to_scaffold"
+
+
+def test_the_library_screen_menu_count_and_my_items_to_fill(loaded: Env) -> None:
+    with_library(loaded)
+    loaded.set_identity("binh", "designer")
+    counts = loaded.get("/api/state")["menu_counts"]
+    assert counts["thu_vien"] == {"n": 3, "red": True}  # binh was given a placeholder
+    mine = loaded.get("/api/overview")["my_items"]
+    assert [i["key"] for i in mine] == ["HM-002"] and mine[0]["name"] == "Bộ nguồn"
+    loaded.set_identity("chi", "designer")
+    assert loaded.get("/api/overview")["my_items"] == []
+    assert loaded.get("/api/state")["menu_counts"]["thu_vien"]["red"] is False
+
+
+def test_context_of_a_library_item_lists_where_it_is_used_and_a_node_names_its_item(loaded: Env) -> None:
+    with_library(loaded, nut=lambda rows: (link(rows, "N1.1", "HM-001"), link(rows, "N4", "HM-001")))
+    item = loaded.get("/api/context", table="hang_muc", key="HM-001")
+    text = json.dumps(item, ensure_ascii=False)
+    assert item["title"] == "HM-001 - Hydrophone HTI-96" and "N1.1 - Hydrophone HTI-96" in text and "N4 - " in text
+    node = json.dumps(loaded.get("/api/context", table="nut", key="N1.1"), ensure_ascii=False)
+    assert "HM-001 - Hydrophone HTI-96" in node
+
+
+def test_the_chart_payload_lists_the_architectures_with_their_state(loaded: Env) -> None:
+    archs = {a["key"]: a for a in loaded.get("/api/tree_nodes")["archs"]}
+    assert archs["KT-A"]["status"] == "Chọn" and archs["KT-B"]["status"] == "Loại" and archs["KT-A"]["name"] == "Một bể"
+
+
+def test_a_placeholder_can_be_created_in_the_library_without_placing_it(loaded: Env) -> None:
+    with_library(loaded)
+    data = loaded.post("/api/breakdown/add", {"new": {"ten": "Cáp tín hiệu", "nguoi_dien": "chi"}, "place": False})[1]
+    assert data["item"] == "HM-004" and data["node"] == "" and data["created_item"] is True
+    assert loaded.app.store.count_drafts() == 1 and next(i for i in loaded.get("/api/library")["items"] if i["key"] == "HM-004")["used"] == 0
+
+
+def test_the_owner_filter_of_a_table_also_knows_who_fills_a_library_item(loaded: Env) -> None:
+    with_library(loaded)
+    rows = loaded.get("/api/rows", table="hang_muc", owner="binh")["rows"]
+    assert [r["key"] for r in rows] == ["HM-002"] and rows[0]["owner"] == "binh"

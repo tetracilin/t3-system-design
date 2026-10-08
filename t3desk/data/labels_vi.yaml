@@ -17,6 +17,7 @@ tables:
   rfq: "RFQ / RFP"
   cong_viec: "Công việc"
   ghi_chu: "Ghi chú"
+  hang_muc: "Thư viện hạng mục"
 
 system_fields:
   auto_number: "Số thứ tự"
@@ -48,6 +49,10 @@ fields:
   diem_thoi_gian: "Điểm thời gian (1-5)"
   ly_do: "Lý do"
   ma_gc: "Mã ghi chú"
+  ma_hm: "Mã hạng mục"
+  cap: "Cấp"
+  sku: "SKU"
+  nguoi_dien: "Người điền"
   bang: "Bảng"
   ma_ban_ghi: "Mã bản ghi"
   nguoi_viet: "Người viết"
@@ -136,7 +141,11 @@ overrides:
   kien_truc:
     ten: "Tên kiến trúc"
   nut:
-    ten: "Tên nút"
+    ten: "Tên nút (nếu không dùng hạng mục)"
+    ma_hm: "Hạng mục (thư viện)"
+  hang_muc:
+    ten: "Tên hạng mục"
+    trang_thai: "Tình trạng"
   moc:
     ten: "Tên mốc"
     trang_thai: "Trạng thái mốc"
@@ -206,6 +215,10 @@ rules:
   warn_arch_no_reason: "Kiến trúc được chọn hoặc loại phải có lý do"
   warn_arch_multi_chosen: "Có hơn một kiến trúc ở trạng thái Chọn"
   warn_req_no_criterion: "Yêu cầu Bắt buộc chưa có tiêu chí nghiệm thu"
+  root_system_name: "Hệ thống"
+  warn_lib_unassigned: "Hạng mục chỗ giữ chỗ chưa giao cho ai điền"
+  warn_lib_oem_incomplete: "Hạng mục OEM đã điền nhưng thiếu hãng hoặc model/SKU"
+  warn_node_no_name: "Nút chưa có tên: chọn hạng mục thư viện hoặc nhập tên"
   warn_finding_no_owner: "Thẻ sai lệch hoặc nhận xét đang mở chưa có người nhận"
   warn_alloc_duplicate: "Trùng cặp yêu cầu và nút"
   warn_alloc_type_nonleaf: "Nút không phải lá chỉ được kiểu Kiểm ở cấp hệ thống"

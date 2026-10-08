@@ -4,7 +4,7 @@
   --accent: #1f5fbf; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #b3261e; --draft: #a35b00;
   --draft-bg: #fff7d6; --on: #1f5fbf; --on-bg: #e3edff; --here-bg: #ffe9a8; --err-bg: #fde4e1; --top-bg: #1c2330;
   --hermes: #5b34b0; --hermes-bg: #f6f1ff;
-  --p1w: 280px; --p2w: 300px; --p4w: 320px; --strip-w: 40px;
+  --p1w: 280px; --p2w: 340px; --p4w: 320px; --strip-w: 40px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -209,6 +209,34 @@ tr.new-row td.cell { color: var(--muted); }
 .palette-list li.on { background: var(--on-bg); }
 .finding .btn { margin-left: 6px; }
 .review-group h2 .btn { margin-left: 8px; }
+
+/* breakdown chart: three labelled levels, architecture branches, library under it */
+#p2-body:has(.p2-chart) { overflow: hidden; }
+#p2-body:has(.p2-chart) .p2-inner { height: 100%; display: flex; flex-direction: column; }
+.p2-chart { flex: 1 1 52%; min-height: 140px; overflow: auto; }
+.p2-library { flex: 1 1 48%; min-height: 150px; overflow: auto; border-top: 2px solid var(--line); padding-bottom: 8px; background: var(--panel); }
+.chart-bar { padding: 6px 8px 0; }
+#chart .row { display: block; padding-top: 3px; padding-bottom: 3px; }
+#chart .row .r1, .lib-item .r1 { display: flex; align-items: center; gap: 6px; }
+#chart .row .r2, .lib-item .r2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-left: 20px; font-size: 11px; color: var(--muted); }
+.cap { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; border-radius: 4px; padding: 0 5px; background: var(--head); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.cap-0 { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cap-1 { background: var(--on-bg); border-color: var(--accent); color: var(--ink); }
+.chip.item { padding: 0 6px; margin: 0; font-size: 11px; }
+.chip.item.ph { border-style: dashed; border-color: var(--draft); color: var(--draft); background: var(--draft-bg); }
+.chip.arch { padding: 0 6px; margin: 0; font-size: 11px; border-color: var(--hermes); color: var(--hermes); }
+.arch-head { display: flex; align-items: center; gap: 6px; padding-top: 5px; padding-bottom: 5px; background: var(--head); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); font-size: 12px; }
+.arch-head.common { color: var(--muted); }
+.arch-head.sel { box-shadow: inset 3px 0 var(--hermes); }
+.arch-head .nx { margin-left: auto; }
+#chart .row.drop, .arch-head.drop { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--on-bg); }
+.lib-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 0; }
+.lib-head h3 { margin: 0; flex: 1; font-size: 13px; }
+.lib-new { display: flex; gap: 4px; padding: 0 8px 4px; flex-wrap: wrap; }
+.lib-new input { flex: 1 1 120px; min-width: 0; }
+.lib-item { cursor: grab; display: block !important; }
+.lib-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-item .btn { margin-left: auto; }
 
 /* decision tree diagram (F1) */
 .tree-svg { display: block; font-family: inherit; }
