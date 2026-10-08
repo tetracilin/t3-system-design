@@ -68,6 +68,9 @@ const SHORTCUTS = [
   { id: 'gate', keys: 'Space', label: 'sc_gate',
     match: (ev) => ev.key === ' ' && !!ev.target && !!ev.target.dataset && !!ev.target.dataset.gate,
     run: () => { /* a focused gate switch toggles natively; this entry documents it */ } },
+  { id: 'quick_add', keys: 'Alt+A', label: 'sc_quick_add',
+    match: (ev) => ev.altKey && !ev.shiftKey && !withMod(ev) && (ev.key === 'a' || ev.key === 'A'),
+    run: () => { quickAddDialog(); } },
   { id: 'library_focus', keys: 'Alt+L', label: 'sc_library',
     match: (ev) => ev.altKey && !ev.shiftKey && (ev.key === 'l' || ev.key === 'L'),
     run: () => {
@@ -166,14 +169,56 @@ function focusPane(n) {
   for (const p of document.querySelectorAll('.pane')) p.classList.toggle('focused', p === pane);
 }
 
-function resizePane(n, delta) {
-  const key = { 1: '--p1w', 2: '--p2w', 4: '--p4w' }[n];
+const PANE_VAR = { 1: '--p1w', 2: '--p2w', 4: '--p4w' };
+
+/** Set the width of pane 1, 2 or 4 (pane 3 takes what is left). Capped so pane 3 keeps at least 360 px. */
+function setPaneWidth(n, width) {
+  const key = PANE_VAR[n];
   if (!key) return;
   const root = document.documentElement;
-  const cur = parseInt(getComputedStyle(root).getPropertyValue(key), 10) || 300;
-  const next = Math.max(n === 1 ? 44 : 180, Math.min(640, cur + delta));
+  const others = [1, 2, 4].filter((x) => x !== n).reduce((sum, x) => sum + (parseInt(getComputedStyle(root).getPropertyValue(PANE_VAR[x]), 10) || 0), 0);
+  const room = Math.max(180, window.innerWidth - others - 360);
+  const next = Math.max(n === 1 ? 44 : 180, Math.min(room, Math.round(width)));
   root.style.setProperty(key, next + 'px');
   try { localStorage.setItem('t3' + key, String(next)); } catch (e) { /* storage may be blocked: the width still applies */ }
+}
+
+function resizePane(n, delta) {
+  const key = PANE_VAR[n];
+  if (!key) return;
+  setPaneWidth(n, (parseInt(getComputedStyle(document.documentElement).getPropertyValue(key), 10) || 300) + delta);
+}
+
+/** Drag handles between the panes, and between the chart and the library in pane 2. Arrow keys work on a focused handle. */
+function addSplitter(pane, n, side) {
+  const bar = h('div', { class: 'splitter ' + side, role: 'separator', 'aria-orientation': 'vertical', tabindex: '0', title: T('splitter_title'), 'data-splitter': String(n) });
+  bar.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    bar.setPointerCapture(ev.pointerId);
+    const left = pane.getBoundingClientRect().left;
+    const right = pane.getBoundingClientRect().right;
+    const move = (e) => setPaneWidth(n, side === 'right' ? e.clientX - left : right - e.clientX);
+    const stop = () => { bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', stop); bar.classList.remove('drag'); };
+    bar.classList.add('drag');
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', stop);
+  });
+  bar.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const grow = (side === 'right') === (ev.key === 'ArrowRight');
+    resizePane(n, grow ? 40 : -40);
+  });
+  bar.addEventListener('dblclick', () => { document.documentElement.style.removeProperty(PANE_VAR[n]); try { localStorage.removeItem('t3' + PANE_VAR[n]); } catch (e) { /* ignore */ } });
+  pane.appendChild(bar);
+}
+
+function initChrome() {
+  addSplitter(document.getElementById('pane1'), 1, 'right');
+  addSplitter(document.getElementById('pane2'), 2, 'right');
+  addSplitter(document.getElementById('pane4'), 4, 'left');
+  document.getElementById('quick-add').addEventListener('click', () => quickAddDialog());
 }
 
 /* ---------- command palette (Ctrl+K) and cheat sheet (?) ---------- */

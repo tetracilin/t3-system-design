@@ -38,6 +38,40 @@ function gridCell(table, name, fs, value) {
   return h('span', { text: String(value) });
 }
 
+/** Save one changed field of a row that already exists (committed or a draft) as a draft. The grid and the properties
+ *  panel both use it, so the stale check and the draft rules are the same everywhere. */
+async function saveRowField(table, row, name, value) {
+  const spec = specOf(table);
+  const idName = spec.id_field;
+  let body;
+  if (row.draft_op === 'create') {
+    const fields = { ...row.fields };
+    if (value === '') delete fields[name]; else fields[name] = value;
+    if (spec.id.kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
+    body = { table, op: 'create', fields, draft_id: row.draft, partial: true };
+  } else {
+    const changes = {};
+    for (const k of Object.keys(row.fields)) {
+      if (k === idName) continue;
+      const a = row.fields[k] === '' ? null : row.fields[k];
+      const b = row.base && row.base[k] !== undefined ? row.base[k] : null;
+      if (String(a) !== String(b)) changes[k] = row.fields[k];
+    }
+    const base = row.base && row.base[name] !== undefined ? row.base[name] : null;
+    if (String(value === '' ? null : value) === String(base)) delete changes[name]; else changes[name] = value;
+    if (!Object.keys(changes).length && row.draft) {
+      await api('/api/draft/discard', { body: { draft_id: row.draft } });
+      delete S.tableCache[table];
+      return { discarded: true };
+    }
+    body = { table, op: 'update', key: row.key, record_id: row.record_id, base_modified: row.modified, base_fields: row.base || row.fields,
+      draft_id: row.draft || undefined, fields: changes, partial: true };
+  }
+  const res = await api('/api/draft', { body });
+  delete S.tableCache[table];
+  return { res };
+}
+
 function buildGrid(table, data, o) {
   const opts = o || {};
   const spec = specOf(table);
@@ -359,36 +393,12 @@ function buildGrid(table, data, o) {
     try { g.proposed = (await api('/api/next_id', { query: q })).id || ''; } catch (e) { g.proposed = ''; }
   }
 
-  const changedFields = (row) => {
-    const out = {};
-    for (const k of Object.keys(row.fields)) {
-      if (k === idName) continue;
-      const a = row.fields[k] === '' ? null : row.fields[k];
-      const b = row.base && row.base[k] !== undefined ? row.base[k] : null;
-      if (String(a) !== String(b)) out[k] = row.fields[k];
-    }
-    return out;
-  };
-
   async function saveCell(r, name, value) {
-    let body;
     const row = rowAt(r);
-    if (row && row.draft_op === 'create') {
-      const fields = { ...row.fields };
-      if (value === '') delete fields[name]; else fields[name] = value;
-      if (kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
-      body = { table, op: 'create', fields, draft_id: row.draft, partial: true };
-    } else if (row) {
-      const changes = changedFields(row);
-      const base = row.base && row.base[name] !== undefined ? row.base[name] : null;
-      if (String(value === '' ? null : value) === String(base)) delete changes[name]; else changes[name] = value;
-      if (!Object.keys(changes).length && row.draft) {
-        await api('/api/draft/discard', { body: { draft_id: row.draft } });
-        await g.reload();
-        return;
-      }
-      body = { table, op: 'update', key: row.key, record_id: row.record_id, base_modified: row.modified, base_fields: row.base || row.fields,
-        draft_id: row.draft || undefined, fields: changes, partial: true };
+    let body;
+    if (row) {
+      const out = await saveRowField(table, row, name, value);
+      if (out.discarded) { await g.reload(); return; }
     } else {
       // the new row at the bottom: keep the typed values until its ID is known, then save it as a draft
       if (value === '') delete g.pending[name]; else g.pending[name] = value;
@@ -397,10 +407,12 @@ function buildGrid(table, data, o) {
       else if (kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
       if (!fields[idName]) return; // the ID is not known yet: stays on screen, not yet a draft
       body = { table, op: 'create', fields, partial: true };
+      await api('/api/draft', { body });
+      delete S.tableCache[table];
+      g.pending = {};
+      g.justCreated = body.fields[idName];
+      await proposeId();
     }
-    await api('/api/draft', { body });
-    delete S.tableCache[table];
-    if (!row) { g.pending = {}; g.justCreated = body.fields[idName]; await proposeId(); }
     await g.reload();
     await loadState();
     if (opts.onChange) opts.onChange(table);

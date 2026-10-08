@@ -46,6 +46,8 @@ STATIC_TYPES = {
     "tree.js": "text/javascript; charset=utf-8",
     "notes.js": "text/javascript; charset=utf-8",
     "grid.js": "text/javascript; charset=utf-8",
+    "props.js": "text/javascript; charset=utf-8",
+    "quick.js": "text/javascript; charset=utf-8",
     "keys.js": "text/javascript; charset=utf-8",
     "style.css": "text/css; charset=utf-8",
 }
@@ -1285,11 +1287,36 @@ class App:
             return "r"
         return "y"
 
+    def alloc_scope(self, a: rules.Analysis, node: str, related: bool) -> list[tuple[str, bool]]:
+        """The selected node and everything below it, then (optionally) other places of the same library parts."""
+        subtree, stack = {node}, [node]
+        while stack:
+            for child in a.children.get(stack.pop(), []):
+                if child not in subtree:
+                    subtree.add(child)
+                    stack.append(child)
+        out = [(c, False) for c in sorted(subtree, key=natural_key)]
+        if related:
+            items = {_s(a.nodes[c].get("ma_hm")) for c in subtree} - {""}
+            others = {c for item in items for c in a.places(item)} - subtree
+            out += [(c, True) for c in sorted(others, key=natural_key)]
+        return out
+
     def alloc_matrix(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Requirements against nodes. With ?node= only that node, its children and (related=1) other uses of its parts."""
         a = self.analysis()
-        columns = sorted({c for c in a.leaves} | {_s(p.get("ma_nut")) for p in a.t["phan_bo"]}, key=natural_key)
+        node = query.get("node", "")
+        if node and node in a.nodes:
+            scope = self.alloc_scope(a, node, query.get("related") == "1")
+        else:
+            columns = sorted({c for c in a.leaves} | {_s(p.get("ma_nut")) for p in a.t["phan_bo"]}, key=natural_key)
+            scope = [(c, False) for c in columns]
+        columns = [c for c, _ in scope]
+        wanted = set(columns)
         cells: dict[str, dict[str, Any]] = {}
         for p in a.t["phan_bo"]:
+            if _s(p.get("ma_nut")) not in wanted:
+                continue
             cells[f"{_s(p.get('ma_yc'))}|{_s(p.get('ma_nut'))}"] = {
                 "key": _s(p.get("ma_pb")), "kieu": _s(p.get("kieu")), "value": p.get("gia_tri_phan_bo"),
                 "unit": _s(p.get("don_vi")), "draft": p.get("_draft"),
@@ -1299,9 +1326,13 @@ class App:
                  "over": b.over, "method": b.method}
             for yc, b in a.budget_totals().items()
         }
-        reqs = [{"code": _s(r.get("ma_yc")), "text": _s(r.get("mo_ta")), "muc": _s(r.get("muc"))}
+        in_use = {key.split("|")[0] for key in cells}
+        reqs = [{"code": _s(r.get("ma_yc")), "text": _s(r.get("mo_ta")), "muc": _s(r.get("muc")),
+                 "used": _s(r.get("ma_yc")) in in_use}
                 for r in sorted(a.t["yeu_cau"], key=lambda r: natural_key(_s(r.get("ma_yc"))))]
         return {"requirements": reqs, "nodes": [c for c in columns if c in a.nodes or c],
+                "scope": [{"code": c, "name": a.node_name(c), "level": a.level(c) if c in a.nodes else 0, "related": rel}
+                          for c, rel in scope],
                 "cells": cells, "budgets": budgets, "names": self.names(a)}
 
     def node_detail(self, query: dict[str, str], body: Any) -> dict[str, Any]:

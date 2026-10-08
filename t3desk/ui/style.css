@@ -270,3 +270,45 @@ tr.new-row td.cell { color: var(--muted); }
   body { background: #fff; color: #000; display: block; }
   .counter, .review-group { break-inside: avoid; }
 }
+
+/* resizable panes, properties panel, allocation filter, quick add */
+.pane { position: relative; }
+.splitter { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; background: transparent; touch-action: none; }
+.splitter.right { right: -3px; }
+.splitter.left { left: -3px; }
+.splitter:hover, .splitter:focus-visible, .splitter.drag { background: var(--accent, #2f6fdb); opacity: .5; outline: none; }
+.fab { position: fixed; right: 20px; bottom: 44px; z-index: 40; display: flex; align-items: center; gap: 6px; border: 0; border-radius: 24px; padding: 10px 18px 10px 14px;
+  background: var(--accent, #2f6fdb); color: #fff; font-weight: 600; box-shadow: 0 4px 14px rgba(0,0,0,.3); cursor: pointer; }
+.fab span:first-child { font-size: 20px; line-height: 1; }
+.fab:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+#toast { bottom: 96px; }
+.dialog.quick { width: min(680px, 96vw); }
+.qa-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.qa-tabs button { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 4px 12px; cursor: pointer; color: inherit; }
+.qa-tabs button[aria-selected="true"] { background: var(--accent, #2f6fdb); color: #fff; border-color: transparent; }
+.dialog.quick .qa-fields, .props { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 12px; }
+.dialog.quick .f, .props .p { display: flex; flex-direction: column; gap: 2px; }
+.dialog.quick .f.wide, .props .p.wide { grid-column: 1 / -1; }
+.dialog.quick .f label, .props .p label { font-size: 12px; color: var(--muted); }
+.dialog.quick .f.bad input, .dialog.quick .f.bad select, .props .p.bad input, .props .p.bad select, .props .p.bad textarea { border-color: var(--warn); }
+.dialog.quick .why, .props .why { color: var(--warn); font-size: 12px; }
+.props .p.locked input, .props .p.locked select { opacity: .65; }
+.props-wrap > summary { font-weight: 600; padding: 6px 8px; cursor: pointer; }
+.props-block { padding: 4px 8px 10px; border-bottom: 1px solid var(--line); }
+.props-head { margin: 6px 0; font-size: 13px; }
+.props input, .props select, .props textarea { width: 100%; box-sizing: border-box; }
+.alloc-bar { flex-wrap: wrap; gap: 8px; align-items: center; }
+.alloc-bar .list-filter, .alloc-bar input[type="text"] { max-width: 200px; }
+.chip.removable { cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: inherit; }
+th.related { font-style: italic; background: var(--panel); }
+
+/* 24-inch, 1920 x 1080: more room for the system chart and the properties panel, a little more air in the table */
+@media (min-width: 1700px) {
+  :root { --p1w: 300px; --p2w: 480px; --p4w: 380px; }
+  body { font-size: 14px; }
+  .dialog.quick { width: min(820px, 80vw); }
+  .props { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+#alloc-panel .tablewrap { max-height: 38vh; overflow: auto; }
+#alloc-matrix td:first-child, #alloc-matrix th:first-child { min-width: 230px; max-width: 280px; position: sticky; left: 0; background: var(--panel); z-index: 1; }
+#alloc-matrix th { min-width: 120px; }

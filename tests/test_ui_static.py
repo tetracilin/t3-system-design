@@ -25,7 +25,7 @@ import yaml
 from t3desk import server
 
 UI = Path(server.__file__).resolve().parent / "ui"
-SCRIPTS = ("app.js", "notes.js", "grid.js", "keys.js")
+SCRIPTS = ("app.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js")
 NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
@@ -61,7 +61,7 @@ def test_four_panes_in_order_and_pane_1_holds_the_menu_and_the_tree() -> None:
 def test_script_order_defines_the_helpers_before_the_modules_use_them() -> None:
     html = read("index.html")
     order = re.findall(r'<script src="/([a-z]+\.js)">', html)
-    assert order == ["tree.js", "app.js", "notes.js", "grid.js", "keys.js"]
+    assert order == ["tree.js", "app.js", "notes.js", "grid.js", "props.js", "quick.js", "keys.js"]
     for name in order:
         assert (UI / name).is_file()
 
@@ -73,6 +73,7 @@ DIALOGS_THAT_REMAIN = {
     "conflictDialog", "staleDialog",  # commit: duplicate ID and stale edit, not adding or editing
     "closeFinding", "addNote",        # weekly review: a closing reason and the kind of remark
     "paletteDialog", "cheatSheet", "widenPanel",  # navigation help: Ctrl+K, ? and F1
+    "quickAddDialog",       # Quick add: the one pop-up for adding, asked for by Viet (button and Alt+A)
 }
 
 
@@ -94,7 +95,7 @@ def test_no_form_pop_up_for_adding_or_editing_a_record() -> None:
 
 def test_the_grid_saves_every_cell_as_a_draft_through_the_same_api_call() -> None:
     src = read("grid.js")
-    assert src.count("api('/api/draft'") == 1 and "partial: true" in src
+    assert src.count("api('/api/draft'") == 2 and src.count("partial: true") >= 2  # the shared field save and the new row
     assert "base_modified: row.modified" in src and "draft_id: row.draft" in src  # the stale check still works
     assert "specOf(table)" in src and "spec.fields" in src  # columns come from the schema, not from the code
 
@@ -122,6 +123,7 @@ SAMPLES = {
     "tabs": ({"ctrlKey": True, "key": "PageDown"}, {}),
     "row_discard": ({"altKey": True, "key": "Backspace"}, {"inGrid": True}),
     "library_focus": ({"altKey": True, "key": "l"}, {}),
+    "quick_add": ({"altKey": True, "key": "a"}, {}),
     "note_focus": ({"key": "n"}, {}),
     "note_save": ({"ctrlKey": True, "key": "Enter"}, {"inNote": True}),
     "note_preview": ({"altKey": True, "key": "p"}, {}),
@@ -202,7 +204,7 @@ def test_every_clickable_thing_can_take_focus() -> None:
     assert "ev.key === 'Enter' || ev.key === ' '" in app
     # the only raw click listeners left are on the toast (Esc closes it too) and are not on content
     listeners = [(n, m) for n in SCRIPTS for m in re.findall(r"getElementById\('([\w-]+)'\)\.addEventListener\('click'", read(n))]
-    assert {m for _, m in listeners} <= {"toast", "panel-toggle", "panel-wide", "panel-strip"}, listeners
+    assert {m for _, m in listeners} <= {"toast", "panel-toggle", "panel-wide", "panel-strip", "quick-add"}, listeners
     html = read("index.html")
     for ident in ("panel-toggle", "panel-wide", "panel-strip"):
         assert re.search(r'<button[^>]*id="%s"' % ident, html), ident  # real buttons: focusable by default

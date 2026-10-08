@@ -45,7 +45,7 @@ def run_app(browser: bool) -> int:
             import webview
 
             try:
-                webview.create_window("T3 Desk", running.url, width=1366, height=768)
+                webview.create_window("T3 Desk", running.url, width=1366, height=768, resizable=True, min_size=(960, 600))
                 webview.start()
                 return 0
             except Exception as exc:  # pywebview raises assorted errors when the OS web view is missing

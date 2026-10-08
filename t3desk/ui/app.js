@@ -287,6 +287,7 @@ function widenPanel() {
 
 async function selectNode(code) {
   S.node = code;
+  S.sel = code ? { table: 'nut', key: code } : null; // pane 4 shows and edits the chosen component
   await loadTrees();
   if (S.screen === 'nut' || S.screen === 'cay' || S.screen === 'phan_bo') render();
 }
@@ -433,9 +434,19 @@ function ctxBlock(table, b) {
   return null;
 }
 
+const COMPONENT_TABLES = ['nut', 'hang_muc'];
+
+/** What pane 4 is about: the selected row, or else the component chosen in the system chart. */
+function paneSel() {
+  if (S.sel) return S.sel;
+  if (S.node && ['cay', 'phan_bo', 'nut'].includes(S.screen)) return { table: 'nut', key: S.node };
+  return null;
+}
+const sameSel = (a, b) => (!a && !b) || (!!a && !!b && a.table === b.table && a.key === b.key);
+
 async function drawContext() {
   const body = document.getElementById('p4-body');
-  const sel = S.sel;
+  const sel = paneSel();
   const title = document.getElementById('p4-title');
   if (!sel) {
     title.textContent = T('p4_title');
@@ -448,14 +459,22 @@ async function drawContext() {
   try {
     ctx = await api('/api/context', { query: { table: sel.table, key: sel.key } });
   } catch (e) {
-    if (S.sel === sel) { body.textContent = ''; body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') })); }
+    if (sameSel(paneSel(), sel)) { body.textContent = ''; body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') })); }
     return;
   }
-  if (S.sel !== sel) return; // the user moved on while this was loading
+  if (!sameSel(paneSel(), sel)) return; // the user moved on while this was loading
   title.textContent = T('p4_row', { title: ctx.title });
   const scroll = body.scrollTop;
+  const editable = COMPONENT_TABLES.includes(sel.table);
+  const props = editable ? h('div', { class: 'props-host', id: 'props-host' }) : null;
   body.textContent = '';
-  const info = h('div', { class: 'ctx-wrap', id: 'ctx-blocks' }, ctx.blocks.map((b) => ctxBlock(sel.table, b)));
+  if (props) {
+    body.appendChild(props);
+    await guard(() => drawProperties(props, sel)); // the breakdown place and its library item, editable here
+    if (!sameSel(paneSel(), sel)) return;
+  }
+  const blocks = ctx.blocks.filter((b) => !(editable && b.type === 'kv')); // the properties above replace the read-only list
+  const info = h('div', { class: 'ctx-wrap', id: 'ctx-blocks' }, blocks.map((b) => ctxBlock(sel.table, b)));
   body.appendChild(info);
   const notes = h('div', { class: 'notes', id: 'notes-box' });
   body.appendChild(notes);
@@ -566,7 +585,10 @@ function rowList(table, rows, onPick, o) {
 async function gridFor(ws, table, o) {
   const opts = o || {};
   const filter = { node: opts.node || '', owner: opts.owner || '' };
-  const fetch = () => getRows(table, filter);
+  const fetch = async () => {
+    const d = await getRows(table, filter);
+    return opts.keep ? Object.assign({}, d, { rows: d.rows.filter(opts.keep) }) : d;
+  };
   const data = await fetch();
   const grid = buildGrid(table, data, {
     fetch, prefill: opts.prefill, actions: opts.actions, noNew: opts.noNew,
@@ -1221,11 +1243,49 @@ async function checkCell(uv, ts) {
   }
 }
 
+/** Allocation for the selected component: its sub-tree (and where its parts are also used), with a requirement filter. */
+async function allocPanel() {
+  const data = await api('/api/alloc', { query: { node: S.node, related: S.allocRelated === false ? '0' : '1' } });
+  const picked = S.reqPick || (S.reqPick = []);
+  const text = (S.reqText || '').toLowerCase();
+  const inFilter = (r) => (picked.length ? picked.includes(r.code)
+    : (text ? (r.code + ' ' + r.text).toLowerCase().includes(text) : (S.reqAll || r.used)));
+  const shown = data.requirements.filter(inFilter);
+  const scope = new Set(data.scope.map((s) => s.code));
+  const view = Object.assign({}, data, { requirements: shown });
+  const redo = () => render();
+
+  const search = h('input', { type: 'search', id: 'alloc-req-filter', class: 'list-filter', value: S.reqText || '', placeholder: T('alloc_filter'), 'aria-label': T('alloc_filter') });
+  search.addEventListener('change', () => { S.reqText = search.value.trim(); redo(); });
+  const options = h('datalist', { id: 'alloc-req-options' }, data.requirements.map((r) => h('option', { value: r.code, label: r.text, text: r.code + ' - ' + r.text })));
+  const add = h('input', { type: 'text', id: 'alloc-req-add', list: 'alloc-req-options', placeholder: T('alloc_add_req'), 'aria-label': T('alloc_add_req'), autocomplete: 'off' });
+  add.addEventListener('change', () => {
+    const code = add.value.trim().split(' ')[0];
+    if (data.requirements.some((r) => r.code === code) && !picked.includes(code)) { picked.push(code); redo(); }
+  });
+  const chips = h('div', { class: 'chips', id: 'alloc-chips' }, picked.map((code) => h('button', { type: 'button', class: 'chip removable', 'data-req': code,
+    title: T('alloc_unpick'), text: code + ' ×', onclick: () => { picked.splice(picked.indexOf(code), 1); redo(); } })));
+  const toggle = (id, label, on, set) => {
+    const cb = h('input', { type: 'checkbox', id, checked: on });
+    cb.addEventListener('change', () => { set(cb.checked); redo(); });
+    return h('label', { class: 'switch' }, cb, label);
+  };
+  const bar = h('div', { class: 'toolbar alloc-bar' },
+    toggle('alloc-related', T('alloc_related'), S.allocRelated !== false, (v) => { S.allocRelated = v; }),
+    toggle('alloc-all', T('alloc_show_all'), !!S.reqAll, (v) => { S.reqAll = v; }),
+    search, add, chips,
+    h('span', { class: 'muted', text: T('alloc_counts', { shown: shown.length, all: data.requirements.length, cols: data.scope.length }) }));
+  options.hidden = true;
+  const el = h('div', { id: 'alloc-panel' }, bar, options, allocMatrix(view));
+  return { el, keep: (row) => scope.has(row.fields.ma_nut) && shown.some((r) => r.code === row.fields.ma_yc) };
+}
+
 function allocMatrix(data) {
   const t = h('table', { class: 'grid compact', id: 'alloc-matrix' });
+  const related = new Set((data.scope || []).filter((s) => s.related).map((s) => s.code));
   t.appendChild(h('thead', null, h('tr', null,
     h('th', { class: 'ro', text: T('col_requirement') }),
-    data.nodes.map((n) => h('th', { class: 'ro', title: withName('nut', n), text: withName('nut', n) })),
+    data.nodes.map((n) => h('th', { class: 'ro' + (related.has(n) ? ' related' : ''), title: withName('nut', n) + (related.has(n) ? ' - ' + T('alloc_related_col') : ''), text: withName('nut', n) })),
     h('th', { class: 'ro', text: T('col_budget_total') }), h('th', { class: 'ro', text: T('col_margin') }))));
   const body = h('tbody');
   for (const r of data.requirements) {
@@ -1268,8 +1328,14 @@ async function hierarchy(ws) {
   if (active === 'doi_chieu' && info && info.compare && info.compare.candidates.length && info.compare.rows.length) {
     ws.p3.appendChild(compareBlock(info.compare, S.node));
   }
-  if (active === 'phan_bo') ws.p3.appendChild(allocMatrix(await api('/api/alloc')));
-  const grid = await gridFor(ws, active, { node: S.node, prefill, onChange: () => { /* counts refresh on the next render */ } });
+  let keep = null;
+  if (active === 'phan_bo') {
+    if (!S.node) { ws.p3.appendChild(h('p', { class: 'muted pad', id: 'alloc-pick', text: T('alloc_pick_node') })); return; }
+    const panel = await allocPanel();
+    ws.p3.appendChild(panel.el);
+    keep = panel.keep;
+  }
+  const grid = await gridFor(ws, active, { node: active === 'phan_bo' ? '' : S.node, prefill, keep, onChange: () => { /* counts refresh on the next render */ } });
   ws.p3.appendChild(grid.el);
 }
 SCREENS.cay = hierarchy;
@@ -1415,6 +1481,7 @@ async function start() {
     }
   } catch (e) { /* no storage: keep the default widths */ }
   setPanel(saved);
+  initChrome();
   buildNav();
   const st = await loadState();
   S.treeName = st ? st.tree : '';
