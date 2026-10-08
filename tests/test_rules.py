@@ -533,6 +533,33 @@ def n_arch_reason(t: Tables) -> None:
     t["kien_truc"].append({"ma_kt": "KT-C", "ten": "Ba", "trang_thai": "Đề xuất"})  # proposed needs no reason
 
 
+def t_req_criterion(t: Tables) -> None:
+    row(t, "yeu_cau", "ma_yc", "R3")["tieu_chi_nghiem_thu"] = ""
+
+
+def n_req_criterion(t: Tables) -> None:
+    row(t, "yeu_cau", "ma_yc", "R5")["tieu_chi_nghiem_thu"] = ""  # Mong muốn needs no criterion
+    t["yeu_cau"].append({"ma_yc": "R7", "mo_ta": "Bỏ", "muc": "Bắt buộc", "trang_thai": "Hủy"})  # retired
+
+
+def t_arch_multi(t: Tables) -> None:
+    arch = row(t, "kien_truc", "ma_kt", "KT-B")
+    arch["trang_thai"], arch["ly_do"] = "Chọn", "Rẻ hơn"
+
+
+def n_arch_multi(t: Tables) -> None:
+    t["kien_truc"].append({"ma_kt": "KT-C", "ten": "Ba", "trang_thai": "Đề xuất"})  # one Chọn only
+
+
+def t_finding_owner(t: Tables) -> None:
+    t["sai_lech"].append({"ma_sl": "SL-001", "mo_ta": "[PĐ] [R1] Tiêu chí chưa đo được", "trang_thai": "Mở"})
+
+
+def n_finding_owner(t: Tables) -> None:
+    t["sai_lech"].append({"ma_sl": "SL-001", "mo_ta": "x", "trang_thai": "Mở", "nguoi_nhan": "an"})
+    t["sai_lech"].append({"ma_sl": "SL-002", "mo_ta": "x", "trang_thai": "Xong"})  # closed needs no owner
+
+
 def t_alloc_dup(t: Tables) -> None:
     t["phan_bo"].append({"ma_pb": "PB-012", "ma_yc": "R1", "ma_nut": "N1.1", "kieu": "Mỗi nút phải đạt"})
 
@@ -785,6 +812,9 @@ WARNING_CASES: dict[str, tuple[Mutator, set[str], Mutator]] = {
     "one_node_at_a_time": (t_one_node, {"N1.2", "N1.3"}, n_one_node),
     "arch_too_few": (t_arch_few, {""}, n_arch_few),
     "arch_no_reason": (t_arch_reason, {"KT-B"}, n_arch_reason),
+    "arch_multi_chosen": (t_arch_multi, {"KT-A", "KT-B"}, n_arch_multi),
+    "req_no_criterion": (t_req_criterion, {"R3"}, n_req_criterion),
+    "finding_no_owner": (t_finding_owner, {"SL-001"}, n_finding_owner),
     "alloc_duplicate": (t_alloc_dup, {"PB-001", "PB-012"}, n_alloc_dup),
     "alloc_type_nonleaf": (t_alloc_nonleaf, {"PB-011"}, n_alloc_nonleaf),
     "alloc_budget_incomplete": (t_budget_incomplete, {"PB-006"}, n_budget_incomplete),

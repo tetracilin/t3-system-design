@@ -546,9 +546,9 @@ class Analysis:
         if self._warnings is None:
             out: list[Warn] = []
             for part in (
-                self._tree_warnings, self._one_node_warnings, self._arch_warnings,
+                self._req_warnings, self._tree_warnings, self._one_node_warnings, self._arch_warnings,
                 self._alloc_warnings, self._spec_warnings, self._cand_warnings,
-                self._check_warnings, self._sourcing_warnings,
+                self._check_warnings, self._sourcing_warnings, self._finding_warnings,
             ):
                 out.extend(part())
             self._warnings = out
@@ -590,6 +590,16 @@ class Analysis:
             for leaves in by_owner.values() if len(leaves) >= 2 for leaf in leaves
         ]
 
+    def _req_warnings(self) -> list[Warn]:
+        """A must-have requirement that is not retired needs an acceptance criterion."""
+        out: list[Warn] = []
+        for row in self.t["yeu_cau"]:
+            must = _s(row.get("muc")) == V.MUST
+            retired = _s(row.get("trang_thai")) == V.CANCELLED
+            if must and not retired and not _s(row.get("tieu_chi_nghiem_thu")):
+                out.append(self._w("req_no_criterion", "yeu_cau", _s(row.get("ma_yc"))))
+        return out
+
     def _arch_warnings(self) -> list[Warn]:
         out: list[Warn] = []
         rows = self.t["kien_truc"]
@@ -599,6 +609,19 @@ class Analysis:
             status = _s(row.get("trang_thai"))
             if status in (V.ARCH_CHOSEN, V.ARCH_REJECTED) and not _s(row.get("ly_do")):
                 out.append(self._w("arch_no_reason", "kien_truc", _s(row.get("ma_kt"))))
+        chosen = [_s(r.get("ma_kt")) for r in rows if _s(r.get("trang_thai")) == V.ARCH_CHOSEN]
+        if len(chosen) > 1:
+            out.extend(self._w("arch_multi_chosen", "kien_truc", code) for code in chosen)
+        return out
+
+    def _finding_warnings(self) -> list[Warn]:
+        """An open change card or review finding with nobody assigned is seen by no one."""
+        out: list[Warn] = []
+        for row in self.t["sai_lech"]:
+            is_open = _s(row.get("trang_thai")) in ("", V.CHANGE_OPEN)
+            if is_open and not _s(row.get("nguoi_nhan")):
+                node = _s(row.get("ma_nut")) or None
+                out.append(self._w("finding_no_owner", "sai_lech", _s(row.get("ma_sl")), node))
         return out
 
     def _alloc_warnings(self) -> list[Warn]:
