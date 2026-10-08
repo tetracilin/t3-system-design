@@ -87,6 +87,7 @@ what a review corrected.
 | --- | --- | --- |
 | a | Mandatory (`muc` = Bắt buộc) requirement with empty `tieu_chi_nghiem_thu` → soft warning | Row, Yêu cầu screen, review view |
 | b | Existing rule `tree_too_early` (`rules.py:576`, REQUIREMENTS §7 "Đi sâu quá sớm"): no new rule. Show it on the form | **On the spec and candidate forms at save**, via the draft overlay `tables_for_rules` (`server.py:243`), not only on the tree screen |
+| d | Open `sai_lech` (trang_thai Mở) with empty `nguoi_nhan` → warning (eng review R7) | Row, review screen, daily counter "rows with any warning" |
 | c | More than one `kien_truc` with `trang_thai` = Chọn → warning | Kiến trúc screen and the review view. Other Choose buttons say a choice already exists |
 
 Fixes (a) and (c) add warnings that section 7 does not have. They are listed under Departures below. Fix (b) only
@@ -94,7 +95,7 @@ changes where an existing warning shows.
 
 ### 2. Weekly review view ("Rà soát tuần")
 
-A role-default view for the System designer. It is built from the existing `/api/overview` (`server.py:684`) and the
+A new screen `ra_soat` in the menu (the System designer's default stays `yeu_cau`; eng review R6). It is built from the existing `/api/overview` (`server.py:684`) and the
 `Analysis` object (`rules.analyse`, `warnings_for`). It adds no new rules.
 
 - Grouped by owner (`phu_trach`), then by leaf. Each leaf shows its next action, its open warnings, and its records
@@ -105,8 +106,8 @@ A role-default view for the System designer. It is built from the existing `/api
   `cai_dat` key, so it goes in `schema.yaml` defaults and `labels_*_vi.yaml`.
 - "Changed since last review" counts **committed** changes only (cached `_modified`, `server.py:115`). Drafts are not
   shown, because the review judges what was sent.
-- `ngay_ra_soat_cuoi` is a UTC timestamp (ISO 8601), set when "Kết thúc rà soát" is committed, and compared with
-  `lastModifiedTime`. The review cycle is a second new `cai_dat` key, `chu_ky_ra_soat_ngay` (default 7). With no
+- `ngay_ra_soat_cuoi` is a UTC timestamp (ISO 8601) compared with `lastModifiedTime`. "Kết thúc rà soát" first runs a
+  Refresh, then sets it to the newest cached `lastModifiedTime` (NAS clock, not the laptop clock; eng review R3). The review cycle is a second new `cai_dat` key, `chu_ky_ra_soat_ngay` (default 7). With no
   `ngay_ra_soat_cuoi` yet, "since last review" means the last `chu_ky_ra_soat_ngay` days.
 - "Kết thúc rà soát" is enabled for the System designer role only, like the gates (REQUIREMENTS §2).
 - At the top: the dashboard counters (section 7) and the list of open findings.
@@ -126,7 +127,7 @@ asks "Có thẻ sai lệch giao cho bạn?" (`rules.my_change_cards`), and `task
   | Leaf row | the leaf | the leaf's `phu_trach` | (empty) |
   | Warning row | the warning's node | the warning's owner | the warning's record code, e.g. `[TS-011]` |
   | Changed-record row | the record's node | the node's `phu_trach` | the record code |
-  | Requirement or architecture (no node) | `N0` | **empty: the reviewer must pick** | the code, e.g. `[R7]` |
+  | Requirement or architecture (no node) | **empty** (field is optional; eng review R1) | **empty: the reviewer must pick** | the code, e.g. `[R7]` |
 
 - `nguoi_nhan` is filled from a picker of the known `phu_trach` names, not free text. Matching is exact-string
   (`rules.py:882`), so a typo would hide the finding.
@@ -155,7 +156,8 @@ A print stylesheet in `style.css` for the review view. One page per meeting is t
 
 ### Departures from REQUIREMENTS.md (add to STATUS.md)
 
-- Fixes (a) and (c): two new warnings not in §7.
+- Fixes (a), (c) and (d): three new warnings not in §7.
+- A 12th screen `ra_soat` (REQUIREMENTS §8 lists 11; `tests/test_server.py:177` asserts 11 and must change to 12).
 - `cai_dat` gains `ngay_ra_soat_cuoi` and `chu_ky_ra_soat_ngay`, beyond the fixed row list in §4.
 - `sai_lech` is used as the review-finding record and is written by the System designer. §2 gives change cards to the
   PM (see open question 3).
@@ -206,3 +208,415 @@ from that date. Ten minutes. If you can't fill in the date, that is the real blo
   to agree.
 - The v1 back end is already shaped for this. `sai_lech`, `my_change_cards` and `task_outbox` mean the review loop
   mostly needs a view, not new data.
+
+## Eng review (plan-eng-review, 2026-10-08)
+
+Target: `docs/designs/review-first-pilot.md` (this file). Report file: this file.
+
+### Scope record
+
+feature answers: none proposed (no cuts); structure: A Original arrangement (D14); accepted scope: plan sections 1-5 as
+written, with a separate `ra_soat` screen + `GET /api/review`; pending remedies: F1, F3, F5.
+Scope Challenge result: scope accepted as-is.
+
+### Scope Challenge findings
+
+- F1 [P1] (confidence: 9/10) `t3desk/data/schema.yaml` sai_lech `ma_nut: {type: text, ref: nut}`: the plan sets
+  `ma_nut = N0` for requirement and architecture findings, but in pilot session 1 only requirements exist, no `N0`.
+  Validation refuses a ref to a missing node, so the first review findings cannot be saved. (reviewer: Claude)
+- F2 [P2] (confidence: 9/10) `t3desk/server.py:577` `return {"draft": self.draft_payload(saved, known), "drafts": ...}`:
+  `save_draft` returns validation issues only, no rule warnings. Plan fix (b) ("show `tree_too_early` on the spec form
+  at save") therefore needs the save response (or a follow-up call) to carry the rule warnings for the saved row's node.
+  Factual correction of the plan's mechanism, no behavior change: recorded, no question. (reviewer: Claude)
+- F3 [P2] (confidence: 7/10) Plan "`ngay_ra_soat_cuoi` is a UTC timestamp ... compared with `lastModifiedTime`" vs
+  `server.py:115` `row["_modified"] = record.get("lastModifiedTime")`: the review date comes from the laptop clock,
+  `_modified` from the NAS clock. Skew of minutes can drop or double-count changes made around the meeting. (Claude)
+- F4 [P2] (confidence: 9/10) `server.py:517-527` `check_role_for` only guards gates and `Chọn`. The plan's "Kết thúc rà
+  soát is System designer only" and "only the reviewer may set Hủy" on `sai_lech` need two more conditions there.
+  Necessary implementation of approved behavior: recorded, no question. (reviewer: Claude)
+- F5 [P2] (confidence: 9/10) `git status`: 15 modified tracked files (rules.py, server.py, app.js, tests, ...) from the
+  predator follow-up are uncommitted, and STATUS.md says the full suite was not re-run after the last fix. Building the
+  review mode on top tangles two changes in one diff. (reviewer: Claude)
+
+## Decision ledger
+
+### R1: Where findings about requirements and architectures attach
+Finding: F1, P1, 9/10, t3desk/data/schema.yaml sai_lech.ma_nut, Claude
+Plan baseline: `ma_nut = N0` for requirement/architecture findings (plan section 3 table), approved in office hours D12
+Runtime evidence: `ma_nut` is optional (`{type: text, ref: nut}`, not required); refs are validated against known ids; N0 absent before the tree exists
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1 ma_nut for no-node findings | N0 | empty (allowed, field optional) | N0, and require the tree first |
+| R3 review timestamp source | pending | pending | pending |
+| R5 commit WIP first | pending | pending | pending |
+Question D15:
+D15 — Findings about a requirement can't point at N0 before the tree exists. Leave ma_nut empty instead?
+Header: No-node finds
+Options:
+A) Leave ma_nut empty (recommended)
+✅ Works from pilot session 1, when only requirements exist; ma_nut is already optional in schema.yaml. ✅ Record code still leads mo_ta ([PĐ] [R7] ...), so nothing is lost. ❌ Review view must show node-less findings in the 'Cấp hệ thống' group (small UI branch).
+B) Keep N0, require tree first
+✅ Every finding has a node, simpler grouping in the view. ✅ No plan change. ❌ No requirement findings can be saved until N0 is created, which blocks the first review of a new project.
+
+State: approved
+Actual answer: A) Leave ma_nut empty (D15, 2026-10-08)
+Accepted scope: findings with no node leave `sai_lech.ma_nut` empty; the review view lists them in the "Cấp hệ thống" group; plan section 3 table amended
+History: none
+
+### R3: Clock used for "since last review"
+Finding: F3, P2, 7/10, server.py:115 `_modified` (NAS clock) vs plan's laptop-clock `ngay_ra_soat_cuoi`, Claude
+Plan baseline: `ngay_ra_soat_cuoi` = UTC timestamp when "Kết thúc rà soát" is committed (plan section 2), approved D12
+Runtime evidence: `_modified` is Teable's `lastModifiedTime`, server clock; laptop clock skew unknown (not probed)
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1 ma_nut for no-node findings | empty (D15) | empty (D15) | empty (D15) |
+| R3 review timestamp source | laptop clock at click | newest cached `_modified` at click (server clock) | laptop clock at click |
+| R5 commit WIP first | pending | pending | pending |
+Question D16:
+D16 — Stamp the end of a review with the NAS clock (newest change seen) instead of the laptop clock?
+Header: Review clock
+Options:
+A) Use newest cached change (recommended)
+✅ Same clock as the lastModifiedTime it is compared with, so no change is missed or counted twice. ✅ One line: max(_modified) over the refreshed cache; one test. ❌ Requires a Refresh just before ending the review (button can do it).
+B) Keep laptop clock
+✅ Simplest, matches the plan as written. ✅ Fine if the laptop and NAS clocks agree. ❌ A few minutes of skew silently hides or repeats edits made around meeting time.
+
+State: approved
+Actual answer: A) Use newest cached change (D16, 2026-10-08)
+Accepted scope: "Kết thúc rà soát" refreshes, then sets `ngay_ra_soat_cuoi` = max cached `_modified`; plan section 2 amended; one test
+History: none
+
+### R5: Commit the uncommitted predator follow-up before building
+Finding: F5, P2, 9/10, git status (15 modified tracked files), Claude
+Plan baseline: not covered by the plan
+Runtime evidence: `git status` shows rules.py, server.py, app.js, decision_tree.*, schema.yaml, labels, tests modified; STATUS.md: full suite not re-run after last fix
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1 ma_nut | empty (D15) | empty (D15) | empty (D15) |
+| R3 review clock | newest _modified (D16) | newest _modified (D16) | newest _modified (D16) |
+| R5 WIP handling | uncommitted | run full pytest, commit WIP as its own commit, then build | build on top, commit together |
+Question D17:
+D17 — Commit the current uncommitted work (predator follow-up) on its own before building review mode?
+Header: WIP first
+Options:
+A) Test and commit WIP first (recommended)
+✅ Review mode lands as its own reviewable diff; a failing test points at one change, not two. ✅ Full pytest run (about 6 min) confirms the last fix STATUS.md never re-ran. ❌ About 10 minutes before building starts.
+B) Build on top
+✅ Starts building immediately, no extra commit step. ✅ Fine if you will squash everything anyway. ❌ Two features in one diff; if a test fails nobody knows which change broke it.
+
+State: approved
+Actual answer: A) Test and commit WIP first (D17, 2026-10-08)
+Accepted scope: before building, run the full pytest suite; if green, commit the 15 modified files as their own commit (predator follow-up); then build review mode
+History: none
+
+### R6: Default screen for the System designer
+Finding: A1, P2, 8/10, server.py:63 `"system_designer": "yeu_cau"`, Claude
+Plan baseline: "A role-default view for the System designer" (plan section 2), approved D12
+Runtime evidence: ROLE_SCREEN maps system_designer to yeu_cau; tests/test_server.py:192 asserts default screens per role
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1 ma_nut | empty (D15) | empty (D15) | empty (D15) |
+| R3 review clock | newest _modified (D16) | newest _modified (D16) | newest _modified (D16) |
+| R5 WIP | commit first (D17) | commit first (D17) | commit first (D17) |
+| R6 System designer default screen | plan: ra_soat | yeu_cau (unchanged); ra_soat one click away in the menu | ra_soat |
+Question D18:
+D18 — Should the review screen open by default for the System designer, or stay one click away?
+Header: Default screen
+Options:
+A) Keep Yêu cầu default (recommended)
+✅ At project start the System designer's job is entering requirements; an empty review screen first is noise. ✅ No change to ROLE_SCREEN or its test. ❌ Viet clicks 'Rà soát tuần' once per meeting.
+B) Review screen default
+✅ Makes the review the System designer's home, matching premise 3 literally. ✅ One line in ROLE_SCREEN plus a test row. ❌ Empty or near-empty on a new project; every app start lands on a screen with nothing to do.
+
+State: approved
+Actual answer: A) Keep Yêu cầu default (D18, 2026-10-08)
+Accepted scope: ROLE_SCREEN unchanged; `ra_soat` reachable from the menu; plan section 2 amended
+History: none
+
+### Section 1: Architecture
+
+```
+ Rà soát tuần screen (app.js SCREENS.ra_soat)          Junior's Tổng quan
+        │ GET /api/review                                      │ GET /api/overview
+        ▼                                                      ▼
+ App.review()  ── analysis() (cached, drafts overlaid) ──  App.overview()
+   │  group rows by owner via owner_for()/node_of()          + my_findings: sai_lech where
+   │  N0 group "Cấp hệ thống": rows with no node                nguoi_nhan == me, trang_thai Mở
+   │  changed = committed rows with _modified > ngay_ra_soat_cuoi
+   │  counters + open sai_lech
+   ▼
+ "Ghi nhận xét"  → POST /api/draft (sai_lech, defaults per row kind)
+ "Kết thúc rà soát" → POST /api/refresh → (offline? stop, show error, no draft)
+                    → POST /api/draft cai_dat ngay_ra_soat_cuoi = max(_modified)
+ Commit (unchanged path) → check_role_for re-run (server.py:605) → Teable
+```
+
+- A1 [P2] (confidence: 8/10) server.py:63 default screen. Disposition: approved R6 (D18), keep `yeu_cau`.
+- A2 [P3] (confidence: 9/10) server.py:400-411 `node_of()`/`owner_for()` already map row → node → owner; review
+  grouping reuses them. Disposition: recorded, necessary implementation.
+- A3 [P2] (confidence: 8/10) server.py:389 `raise ApiError(503, "offline", ...)`: "Kết thúc rà soát" stops with the
+  offline message and creates no draft when Refresh fails; never falls back to the laptop clock. Disposition: recorded,
+  required error handling for R3.
+- A4 [P3] (confidence: 9/10) REQUIREMENTS §2 "does not block access": role guards are advisory; a junior who switches role
+  can set Hủy. Accepted by the requirements; `check_role_for` re-runs at commit (server.py:605). Disposition: no change,
+  listed in failure modes.
+
+### R7: Enforce an assignee on review findings
+Finding: Q3, P2, 8/10, schema.yaml `nguoi_nhan: {type: text}` (optional), Claude
+Plan baseline: "`nguoi_nhan`: empty: the reviewer must pick" (plan section 3 table), approved D12; enforcement unspecified
+Runtime evidence: validation only enforces schema `required`; `nguoi_nhan` is not required; PM change cards also use sai_lech
+Comparison grid:
+| Choice | Current | A | B | C |
+|---|---|---|---|---|
+| R1/R3/R5/R6 | approved | unchanged | unchanged | unchanged |
+| R7 assignee enforcement | none | new rule warning `sai_lech` Mở with empty `nguoi_nhan` (rules.py + trigger/no-trigger tests); also counted in "rows with any warning" | UI-only: review form will not save without a pick | make `nguoi_nhan` required in schema.yaml |
+Question D19:
+D19 — How should the app stop a review finding being saved with nobody assigned?
+Header: Assignee check
+Options:
+A) Rule warning (recommended)
+✅ Pure rule in rules.py with two tests; shows on the row, the review screen and the daily counter, so it cannot hide. ✅ Covers findings from any screen or plugin draft, not only the review form. ❌ Adds a third new warning to section 7 (one more Departure).
+B) Review form check only
+✅ Smallest change: the 'Ghi nhận xét' form refuses to save without a pick. ✅ No rule or schema change. ❌ A card made elsewhere (Bản nháp edit, plugin, PM) can still have no assignee and stay invisible.
+C) Required in schema
+✅ Server refuses any sai_lech without nguoi_nhan, strongest guarantee. ✅ One line in schema.yaml. ❌ Schema change (needs Viet's approval anyway) and breaks PM change cards that are logged before an owner is known.
+
+State: approved
+Actual answer: A) Rule warning (D19, 2026-10-08)
+Accepted scope: rules.py warning for open sai_lech with empty nguoi_nhan, label in labels_vi.yaml, trigger and no-trigger tests in test_rules.py; listed as fix (d) and under Departures
+History: none
+
+### Section 2: Code quality
+
+- Q1 [P2] (confidence: 8/10) CLAUDE.md "no Vietnamese string literals in code": the `[QT]`/`[PĐ]` prefixes and the
+  closing-reason marker come from `labels_ui_vi.yaml` keys, read by both the form and the later tally. Disposition:
+  recorded, required by convention.
+- Q2 [P3] (confidence: 9/10) tests/test_server.py:144 `expected |= {"nav_" + s for s in server.SCREENS}`: add
+  `nav_ra_soat` and `warn_*` keys for fixes (a), (c), (d). Disposition: recorded.
+- Q3 [P2] (confidence: 8/10) schema.yaml `nguoi_nhan: {type: text}`: no enforcement of an assignee. Disposition:
+  approved R7 (D19), fix (d) rule warning.
+- F2 (from Scope Challenge) is the one structural change in `save_draft`: return `warnings` (rule warnings for the
+  saved row's node, from `analysis().warnings()`) next to `draft`, so the spec and candidate forms show `tree_too_early`.
+
+### R8: Regression contract for changed existing behavior
+Finding: T-REG, CRITICAL, 9/10, tests/test_server.py:177 (11 screens), :255 (overview), :269 (save_draft), :315/:358 (role guards), Claude
+Plan baseline: approved scope R1-R7; regression coverage not stated
+Runtime evidence: full suite on the current tree, 2026-10-08: 463 passed in 351.33s
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1-R7 | approved | unchanged | unchanged |
+| R8 regression contract | unstated | preserve: existing overview keys, save_draft `draft`/`drafts` keys, gate and Chọn guards at save and commit, ROLE_SCREEN; intended changes: SCREENS 11→12 (test :177 updated), overview gains `my_findings`, save_draft gains `warnings`, guards gain ngay_ra_soat_cuoi and sai_lech Hủy; assert old keys unchanged in the extended tests | update only the screen-count test; rely on the existing suite as-is |
+Question D20:
+D20 — Regression contract: which existing behavior must stay exactly as it is?
+Header: Regression
+Options:
+A) Explicit contract (recommended)
+✅ Names what stays (overview keys, save_draft keys, gate/Chọn guards at save and commit, default screens) and what changes on purpose (12 screens, my_findings, warnings, two new guards). ✅ Extended tests assert old keys are still there, so the junior's Tổng quan can't silently break. ❌ About 4 extra assertions (human ~1h / CC ~5 min).
+B) Existing suite only
+✅ Least work: change the 11→12 assertion and stop. ✅ Existing tests already cover today's behavior. ❌ Nothing checks that the new keys didn't replace old ones; a renamed overview key breaks the UI with green tests.
+
+State: approved
+Actual answer: A) Explicit contract (D20, 2026-10-08)
+Accepted scope: preserve overview keys (leaves, counters, warnings, tasks, total_warnings), save_draft keys (draft, drafts), gate and Chọn guards at save and commit, ROLE_SCREEN; intended changes SCREENS 11→12, overview + my_findings, save_draft + warnings, guards + ngay_ra_soat_cuoi and sai_lech Hủy; extended tests assert the preserved keys
+History: none
+
+### R9: End-to-end test of the review loop
+Finding: T-E2E, P2, 8/10, tests/test_flow_predator.py (drives /api/* like the UI), Claude
+Plan baseline: approved R1-R8; no end-to-end test of reviewer → finding → junior → close
+Runtime evidence: test_flow_predator.py already drives two users and commit through the API; no review step
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R1-R8 | approved | unchanged | unchanged |
+| R9 review-loop E2E | none | add one flow test: Viet (system_designer) writes a finding for binh, commits; binh's Tổng quan lists it; binh marks Xong; Viet's review shows it Xong; Kết thúc rà soát sets ngay_ra_soat_cuoi; binh's next edit appears as changed | unit/server tests only |
+Question D21:
+D21 — Add one end-to-end test of the whole review loop, two users, through the same API the UI uses?
+Header: Loop E2E
+Options:
+A) Add the flow test (recommended)
+✅ Proves the pilot's core promise: a finding Viet writes reaches the junior and comes back closed. ✅ Reuses the predator test's two-user Env and fake Teable; one new test function. ❌ Adds ~10 s to the suite (human ~3h / CC ~15 min).
+B) Server tests only
+✅ Each piece is still tested on its own in test_server.py and test_rules.py. ✅ Faster suite. ❌ Nothing proves the pieces connect (nguoi_nhan match, commit order, overview read) across two users.
+
+State: approved
+Actual answer: A) Add the flow test (D21, 2026-10-08)
+Accepted scope: one new test function in tests/test_flow_predator.py walking the two-user review loop as described in the grid
+History: none
+
+### Section 3: Tests
+
+Framework: pytest (CLAUDE.md "Commands"); fake Teable in tests/fake_teable.py. Baseline 2026-10-08: 463 passed.
+
+```
+CODE PATHS                                                 USER FLOWS
+[+] rules.py warnings (extend WARNING_CASES, :820-840)     [+] Weekly review (Viet, system_designer)
+  ├── [GAP] req_no_criterion   trigger + near miss           ├── [GAP] [→E2E] write finding → junior sees → Xong → Viet sees
+  ├── [GAP] arch_multi_chosen  trigger + near miss           ├── [GAP] Kết thúc rà soát while NAS offline → error, no draft
+  └── [GAP] finding_no_owner   trigger + near miss           ├── [GAP] first review, no tree yet → finding with empty ma_nut saves
+[+] server.py                                                └── [GAP] review on empty project → empty groups, no crash
+  ├── review()                                             [+] Junior (binh, engineer)
+  │   ├── [GAP] groups by owner_for(); N0 group               ├── [GAP] Tổng quan lists own open findings only
+  │   ├── [GAP] changed = committed _modified > last review   ├── [GAP] spec draft before gate 2 → form shows tree_too_early
+  │   ├── [GAP] drafts never counted as changed               └── [GAP] switches role, sets Hủy → 403 at save and at commit
+  │   └── [GAP] no ngay_ra_soat_cuoi → last N days        [+] Regression (R8)
+  ├── end_review: refresh → max(_modified) draft              ├── [★★★ TESTED] gate/Chọn guards save+commit — test_server.py:315,:358
+  │   ├── [GAP] happy path value = newest _modified           ├── [★★ TESTED] overview keys — :255 (extend: keys preserved)
+  │   └── [GAP] offline → 503, no draft                       ├── [★★ TESTED] save_draft keys — :269 (extend: + warnings)
+  ├── check_role_for + ngay_ra_soat_cuoi, sai_lech Hủy        └── [★★ TESTED] 11 screens — :177 (intended change → 12)
+  │   └── [GAP] non-designer refused (extend :315 params)
+  ├── overview + my_findings  [GAP] me only, Mở only
+  └── save_draft + warnings   [GAP] before gate 2 / after
+[+] app.js / index.html / style.css
+  ├── [GAP] nav_ra_soat + prefix label keys exist (extend text test :144)
+  └── manual: print the review page (one page), tab order
+
+COVERAGE: 4/22 paths tested (18%) | Code paths: 0/14 | User flows: 4/8 (regression only)
+QUALITY: ★★★:1 ★★:3 | GAPS: 18 (1 E2E)
+```
+
+Tests to add (all approved by R1-R9; extend before create):
+- test_rules.py: three rows in `WARNING_CASES` (trigger + near-miss run automatically; :840 coverage check picks them up).
+  Value: protects=each new warning fires and stays quiet on a near miss; fails_when=condition inverted or removed; why_new=no row exists; seam=none
+- test_server.py: `test_review_groups_by_owner_and_system_group`, `test_review_changed_since_uses_committed_modified`,
+  `test_end_review_stamps_newest_modified`, `test_end_review_offline_creates_no_draft`, `test_overview_lists_my_open_findings_only`,
+  `test_save_draft_returns_tree_too_early_before_gate_2`, `test_finding_without_node_saves`; extend :315 params with the
+  two new guards; extend :255/:269 to assert preserved keys; change :177 to 12 screens.
+  Value: protects=review data, timestamp, role guards, junior visibility; fails_when=grouping, clock or filter regress; why_new=routes are new; seam=none
+- test_flow_predator.py: `test_review_loop_two_users` (R9). [→E2E]
+  Value: protects=finding reaches junior and returns closed; fails_when=nguoi_nhan match, commit order or overview read breaks; why_new=no cross-user review test; seam=none
+- Manual: print review screen on Windows (one page at A4), keyboard reachability.
+
+Tests made obsolete: none. Retire: none.
+
+### Section 4: Performance
+
+- P1 [P3] (confidence: 8/10) rules.py:557 `return [w for w in self.warnings() if w.table == table and w.key == key]`:
+  a linear scan per call. `review()` must index warnings once by (table, key) and by node instead of calling
+  `warnings_for` per row; at the §4 limits (~4,600 rows) per-row scans risk the 1 s draw limit. Disposition: recorded,
+  implementation of the approved 1 s requirement. New warnings (a), (c), (d) are added inside the existing `warnings()`
+  parts so they are computed once and cached with the analysis.
+- Analysis is cached by (rev, node, user, day, drafts) (server.py:266); `warnings()` computed once (rules.py:546). No other issues.
+
+### Outside voice
+
+Codex not installed; native fallback needs TaskOutput, which this session does not expose. Outside coverage:
+unavailable (logged). Earlier in office hours, an independent Claude subagent cold-read the design (see Cross-Model
+Perspective) and a second subagent reviewed the doc twice; those do not count as outside coverage.
+
+### TODOS
+
+No new TODOs proposed: deferred items (UI v2, plugin UI wiring, node retirement, task_outbox after_commit, packaging)
+are already tracked in STATUS.md, and this repo has no TODOS.md.
+
+Approval readiness: PASS (R1 D15, R3 D16, R5 D17, R6 D18, R7 D19, R8 D20, R9 D21; F2, F4, A2, A3, Q1, Q2, P1 recorded as
+necessary implementation of approved behavior)
+
+### NOT in scope
+
+- UI v2 (4-pane, inline grid, `ghi_chu`, Hermes panel, keyboard model): frozen by premise 2 until the pilot.
+- Plugin UI wiring and `task_outbox` after commit: findings reach juniors through `/api/overview` without it.
+- Node retirement status, Excel import, macOS/Linux packaging: not needed for the Windows pilot.
+- A dedicated findings table or `ma_ban_ghi` field: `sai_lech` with an empty `ma_nut` covers the pilot (R1).
+
+### What already exists (reused, not rebuilt)
+
+- `rules.analyse` / `warnings()` / `warnings_for()` and the table-driven `WARNING_CASES` tests.
+- `App.analysis()` cache and `tables_for_rules()` draft overlay (server.py:243-275).
+- `node_of()` / `owner_for()` row → node → owner mapping (server.py:400-411).
+- `check_role_for()` re-run at commit (server.py:517, :605); `refresh()` with offline error (server.py:381-395).
+- `sai_lech` table, `my_change_cards` check, `task_outbox` card source; `warn_tree_too_early` label.
+- Two-user API harness in tests/test_flow_predator.py.
+
+### Failure modes
+
+| New path | Realistic failure | Covered by | User sees |
+| --- | --- | --- | --- |
+| Kết thúc rà soát | NAS offline at end of meeting | test_end_review_offline_creates_no_draft | offline message, no draft |
+| Findings to junior | assignee name typo or blank | picker + rule (d) + E2E loop test | warning on row and counter |
+| First review | no tree yet, ma_nut ref fails | test_finding_without_node_saves (R1) | finding saves |
+| Changed since review | laptop/NAS clock skew | R3 + test_end_review_stamps_newest_modified | correct list |
+| Role guard | junior switches role, sets Hủy | extended guard tests (save + commit) | 403 role_required; advisory only (A4) |
+| Review draw | slow at §4 limits | P1 indexing | screen within 1 s (not benchmarked) |
+
+Critical gaps (no test, no handling, silent): 0.
+
+### Worktree parallelization strategy
+
+| Step | Modules touched | Depends on |
+|------|----------------|------------|
+| T0 commit WIP | (git only) | — |
+| T1 new warnings | t3desk/rules, t3desk/data, tests | T0 |
+| T2 review route, overview, guards, save_draft warnings | t3desk/server, t3desk/data, tests | T0 |
+| T3 review screen, forms, print | t3desk/ui, t3desk/data | T2 |
+| T4 E2E loop test, STATUS.md | tests, docs | T1, T2, T3 |
+
+Lane A: T1 (rules) / Lane B: T2 → T3 (server then UI). Both touch `t3desk/data` label files: coordinate or merge A
+first. Execution order: T0. Launch A + B. Merge A, then B. Then T4. For one person in short sessions: sequential is fine.
+
+## Implementation Tasks
+Synthesized from this review's findings. Each task derives from a specific finding above. Run with Claude Code or Codex; checkbox as you ship.
+
+- [ ] **T0 (P1, human: ~15min / CC: ~10min)** — branch — Commit the predator follow-up on its own
+  - Surfaced by: Scope Challenge F5 (R5, D17); suite already green 2026-10-08 (463 passed)
+  - Files: the 15 modified tracked files
+  - Verify: `git status` clean except new work; commit message names the predator follow-up
+- [ ] **T1 (P1, human: ~3h / CC: ~15min)** — rules — Add warnings (a) req_no_criterion, (c) arch_multi_chosen, (d) finding_no_owner
+  - Surfaced by: plan fixes (a)(c), Code Quality Q3 (R7, D19), Q2 labels
+  - Files: t3desk/rules.py, t3desk/data/labels_vi.yaml, tests/test_rules.py (WARNING_CASES rows)
+  - Verify: `pytest tests/test_rules.py -q`
+- [ ] **T2 (P1, human: ~1 day / CC: ~45min)** — server — `GET /api/review`, end-review stamp, overview `my_findings`, save_draft `warnings`, two new role guards
+  - Surfaced by: F2, F4, R1, R3 (D16), A2, A3, P1, R8 (D20)
+  - Files: t3desk/server.py, t3desk/data/schema.yaml (cai_dat defaults ngay_ra_soat_cuoi, chu_ky_ra_soat_ngay), tests/test_server.py
+  - Verify: `pytest tests/test_server.py -q`; preserved-key assertions pass; screens == 12
+- [ ] **T3 (P2, human: ~1 day / CC: ~45min)** — ui — Rà soát tuần screen, Ghi nhận xét form with defaults table, QT/PĐ toggle and closing reason from labels, tree_too_early on spec/candidate forms, print CSS
+  - Surfaced by: D14 structure, R6 (D18), Q1, F2
+  - Files: t3desk/ui/app.js, t3desk/ui/index.html, t3desk/ui/style.css, t3desk/data/labels_ui_vi.yaml
+  - Verify: `python scripts/smoke.py`; manual print on Windows; `pytest tests/test_server.py -q` (label/static checks)
+- [ ] **T4 (P2, human: ~3h / CC: ~15min)** — tests/docs — Two-user review loop E2E test; STATUS.md Departures and Done
+  - Surfaced by: Test review R9 (D21); Departures list
+  - Files: tests/test_flow_predator.py, STATUS.md
+  - Verify: full `pytest -q` green
+
+### Unresolved decisions
+
+None in this review. Open questions 1-3 in the plan (sai_lech label, who writes findings) remain product questions for Viet.
+
+### Completion summary
+
+- Step 0: Scope Challenge — scope accepted as-is (structure: Original arrangement, D14)
+- Architecture Review: 4 issues found
+- Code Quality Review: 3 issues found
+- Test Review: diagram produced, 18 gaps identified
+- Performance Review: 1 issue found
+- NOT in scope: written
+- What already exists: written
+- TODOS.md updates: 0 items proposed to user
+- Failure modes: 0 critical gaps flagged
+- Unresolved decisions: 0 in this review
+- Outside voice: codex, unavailable (CLI not installed; no TaskOutput for native fallback)
+- Parallelization: 2 lanes, 2 parallel / 3 sequential
+- Lake Score: 6/6 = answers picking a 10/10 option / answers scored for Completeness
+
+### Suppressed findings
+
+- None below confidence 5.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Outside Review | codex via `/plan-eng-review` | Independent 2nd opinion | 1 | unavailable | CLI not installed |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN | 26 issues, 0 critical gaps (all mapped to tasks T0-T4) |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **OUTSIDE COVERAGE:** codex, plan-review phase, unavailable (CLI not installed), no findings.
+- **VERDICT:** No review CLEAR. Eng review ran with every decision answered; status is issues_open because the findings are mapped work (T0-T4), not blockers. eng review required
+
+NO UNRESOLVED DECISIONS
