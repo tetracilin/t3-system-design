@@ -40,7 +40,7 @@ def main() -> int:
             meta = json.loads(get(running.url + "api/meta", app.session)[1])
             state = json.loads(get(running.url + "api/state", app.session)[1])
             trees = json.loads(get(running.url + "api/trees", app.session)[1])
-            assert len(meta["screens"]) == 12, "expected 12 screens"
+            assert len(meta["screens"]) == 13, "expected 13 screens"
             assert state["connection"]["state"] == "unconfigured"
             assert set(trees["trees"]) == {"system_design", "designer", "engineer"}
             print(f"smoke ok: {running.url} screens={len(meta['screens'])} trees={len(trees['trees'])}")

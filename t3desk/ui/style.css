@@ -4,7 +4,7 @@
   --accent: #1f5fbf; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #b3261e; --draft: #a35b00;
   --draft-bg: #fff7d6; --on: #1f5fbf; --on-bg: #e3edff; --here-bg: #ffe9a8; --err-bg: #fde4e1; --top-bg: #1c2330;
   --hermes: #5b34b0; --hermes-bg: #f6f1ff;
-  --p1w: 280px; --p2w: 300px; --p4w: 320px; --strip-w: 40px;
+  --p1w: 280px; --p2w: 340px; --p4w: 320px; --strip-w: 40px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -210,6 +210,35 @@ tr.new-row td.cell { color: var(--muted); }
 .finding .btn { margin-left: 6px; }
 .review-group h2 .btn { margin-left: 8px; }
 
+/* breakdown chart: three labelled levels, architecture branches, library under it */
+#p2-body:has(.p2-chart), #p2-body:has(.p2-library) { overflow: hidden; }
+#p2-body:has(.p2-chart) .p2-inner, #p2-body:has(.p2-library) .p2-inner { height: 100%; display: flex; flex-direction: column; }
+.p2-chart { flex: 1 1 52%; min-height: 140px; overflow: auto; }
+.p2-inner > .list-wrap { flex: 0 1 auto; max-height: 30%; min-height: 90px; overflow: auto; }
+.p2-library { flex: 1 1 48%; min-height: 150px; overflow: auto; border-top: 2px solid var(--line); padding-bottom: 8px; background: var(--panel); }
+.chart-bar { padding: 6px 8px 0; }
+#chart .row { display: block; padding-top: 3px; padding-bottom: 3px; }
+#chart .row .r1, .lib-item .r1 { display: flex; align-items: center; gap: 6px; }
+#chart .row .r2, .lib-item .r2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-left: 20px; font-size: 11px; color: var(--muted); }
+.cap { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; border-radius: 4px; padding: 0 5px; background: var(--head); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.cap-0 { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cap-1 { background: var(--on-bg); border-color: var(--accent); color: var(--ink); }
+.chip.item { padding: 0 6px; margin: 0; font-size: 11px; }
+.chip.item.ph { border-style: dashed; border-color: var(--draft); color: var(--draft); background: var(--draft-bg); }
+.chip.arch { padding: 0 6px; margin: 0; font-size: 11px; border-color: var(--hermes); color: var(--hermes); }
+.arch-head { display: flex; align-items: center; gap: 6px; padding-top: 5px; padding-bottom: 5px; background: var(--head); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); font-size: 12px; }
+.arch-head.common { color: var(--muted); }
+.arch-head.sel { box-shadow: inset 3px 0 var(--hermes); }
+.arch-head .nx { margin-left: auto; }
+#chart .row.drop, .arch-head.drop { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--on-bg); }
+.lib-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 0; }
+.lib-head h3 { margin: 0; flex: 1; font-size: 13px; }
+.lib-new { display: flex; gap: 4px; padding: 0 8px 4px; flex-wrap: wrap; }
+.lib-new input { flex: 1 1 120px; min-width: 0; }
+.lib-item { cursor: grab; display: block !important; }
+.lib-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-item .btn { margin-left: auto; }
+
 /* decision tree diagram (F1) */
 .tree-svg { display: block; font-family: inherit; }
 .tree-svg text { font-size: 12px; fill: var(--ink); }
@@ -242,3 +271,71 @@ tr.new-row td.cell { color: var(--muted); }
   body { background: #fff; color: #000; display: block; }
   .counter, .review-group { break-inside: avoid; }
 }
+
+/* resizable panes, properties panel, allocation filter, quick add */
+.pane { position: relative; }
+.splitter { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; background: transparent; touch-action: none; }
+.splitter.right { right: -3px; }
+.splitter.left { left: -3px; }
+.splitter:hover, .splitter:focus-visible, .splitter.drag { background: var(--accent, #2f6fdb); opacity: .5; outline: none; }
+.fab { position: fixed; right: 20px; bottom: 44px; z-index: 40; display: flex; align-items: center; gap: 6px; border: 0; border-radius: 24px; padding: 10px 18px 10px 14px;
+  background: var(--accent, #2f6fdb); color: #fff; font-weight: 600; box-shadow: 0 4px 14px rgba(0,0,0,.3); cursor: pointer; }
+.fab span:first-child { font-size: 20px; line-height: 1; }
+.fab:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+#toast { bottom: 96px; }
+.dialog.quick { width: min(680px, 96vw); }
+.qa-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.qa-tabs button { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 4px 12px; cursor: pointer; color: inherit; }
+.qa-tabs button[aria-selected="true"] { background: var(--accent, #2f6fdb); color: #fff; border-color: transparent; }
+.dialog.quick .qa-fields, .props { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 12px; }
+.dialog.quick .f, .props .p { display: flex; flex-direction: column; gap: 2px; }
+.dialog.quick .f.wide, .props .p.wide { grid-column: 1 / -1; }
+.dialog.quick .f label, .props .p label { font-size: 12px; color: var(--muted); }
+.dialog.quick .f.bad input, .dialog.quick .f.bad select, .props .p.bad input, .props .p.bad select, .props .p.bad textarea { border-color: var(--warn); }
+.dialog.quick .why, .props .why { color: var(--warn); font-size: 12px; }
+.props .p.locked input, .props .p.locked select { opacity: .65; }
+.props-wrap > summary { font-weight: 600; padding: 6px 8px; cursor: pointer; }
+.props-block { padding: 4px 8px 10px; border-bottom: 1px solid var(--line); }
+.props-head { margin: 6px 0; font-size: 13px; }
+.props input, .props select, .props textarea { width: 100%; box-sizing: border-box; }
+.alloc-bar { flex-wrap: wrap; gap: 8px; align-items: center; }
+.alloc-bar .list-filter, .alloc-bar input[type="text"] { max-width: 200px; }
+.chip.removable { cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: inherit; }
+th.related { font-style: italic; background: var(--panel); }
+
+/* 24-inch, 1920 x 1080: more room for the system chart and the properties panel, a little more air in the table */
+@media (min-width: 1700px) {
+  :root { --p1w: 300px; --p2w: 480px; --p4w: 380px; }
+  body { font-size: 14px; }
+  .dialog.quick { width: min(820px, 80vw); }
+  .props { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+#alloc-panel .tablewrap { max-height: 38vh; overflow: auto; }
+#alloc-matrix td:first-child, #alloc-matrix th:first-child { min-width: 230px; max-width: 280px; position: sticky; left: 0; background: var(--panel); z-index: 1; }
+#alloc-matrix th { min-width: 120px; }
+
+/* the system breakdown as a diagram */
+.dg-scroll { overflow: auto; padding: 4px; }
+.dg-canvas { position: relative; }
+.dg-lines { position: absolute; left: 0; top: 0; pointer-events: none; }
+.dg-link { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.dg-box { position: absolute; box-sizing: border-box; border: 1px solid var(--line); border-left: 5px solid var(--muted); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 6px 30px 6px 8px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; gap: 3px; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.dg-box.lvl-0 { border-left-color: var(--accent); }
+.dg-box.lvl-1 { border-left-color: var(--ok); }
+.dg-box.lvl-2 { border-left-color: var(--draft); }
+.dg-box.sel { outline: 2px solid var(--accent); background: var(--on-bg); color: var(--ink); }
+.dg-box.drop { outline: 2px dashed var(--accent); }
+.dg-box.inactive { opacity: .55; }
+.dg-box.is-draft { border-style: dashed; }
+.dg-l1 { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 12px; }
+.dg-name { font-size: 14px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.dg-box .chip { align-self: flex-start; font-size: 11px; max-width: 100%; overflow-wrap: anywhere; }
+.dg-add, .dg-fold { position: absolute; right: 3px; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: inherit; cursor: pointer; line-height: 1; }
+.dg-add { top: 3px; }
+.dg-fold { bottom: 3px; }
+.dg-add:hover, .dg-fold:hover { background: var(--accent); color: var(--accent-ink); }
+.seg { display: inline-flex; gap: 2px; }
+.seg .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.p2-chart.dg-mode { flex-basis: 68%; }
+.p2-chart.dg-mode + .p2-library { flex-basis: 32%; }
+.p3-inner > .p2-chart.dg-mode { flex: none; max-height: 64vh; min-height: 260px; border-bottom: 2px solid var(--line); margin-bottom: 8px; }

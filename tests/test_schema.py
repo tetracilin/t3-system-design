@@ -11,11 +11,11 @@ from t3desk import schema as s
 
 EXPECTED_TABLES = [
     "yeu_cau", "kien_truc", "nut", "phan_bo", "thong_so", "ung_vien", "doi_chieu",
-    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec", "ghi_chu",
+    "mua_hang", "moc", "quyet_dinh", "sai_lech", "cai_dat", "rfq", "cong_viec", "ghi_chu", "hang_muc",
 ]
 
 
-def test_fifteen_tables_in_order(schema):
+def test_sixteen_tables_in_order(schema):
     assert s.table_keys(schema) == EXPECTED_TABLES
 
 

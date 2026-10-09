@@ -46,6 +46,9 @@ STATIC_TYPES = {
     "tree.js": "text/javascript; charset=utf-8",
     "notes.js": "text/javascript; charset=utf-8",
     "grid.js": "text/javascript; charset=utf-8",
+    "diagram.js": "text/javascript; charset=utf-8",
+    "props.js": "text/javascript; charset=utf-8",
+    "quick.js": "text/javascript; charset=utf-8",
     "keys.js": "text/javascript; charset=utf-8",
     "style.css": "text/css; charset=utf-8",
 }
@@ -67,7 +70,7 @@ ROLE_SCREEN = {
     "sourcing": "mua_hang", "pm": "moc",
 }
 SCREENS = (
-    "khoi_tao", "tong_quan", "ra_soat", "yeu_cau", "kien_truc", "cay", "phan_bo", "nut",
+    "khoi_tao", "tong_quan", "ra_soat", "yeu_cau", "kien_truc", "thu_vien", "cay", "phan_bo", "nut",
     "mua_hang", "rfq", "moc", "commit",
 )
 # Restricted to the System designer (section 2): the two gates and choosing an architecture.
@@ -78,6 +81,8 @@ REVIEW_CYCLE_DEFAULT = 7
 REVIEW_SKIP_TABLES = ("cai_dat", "cong_viec")  # not reviewed: settings and the app's own task rows
 CHANGE_CARD_RETIRE_ROLES = (SYSTEM_DESIGNER, "pm")  # who may set a change card or finding to Hủy
 NOTES_TABLE = "ghi_chu"
+LIBRARY_TABLE = "hang_muc"
+MAX_LEVEL = 2  # N0 is level 0, N1 level 1, N1.1 level 2: the third level is the last
 NOTE_EDITED = "Đã sửa"  # stored value of ghi_chu.trang_thai after the author changes the text
 # A draft with these problems cannot even be kept as a half-filled row; every other problem can.
 HARD_ISSUE_CODES = ("unknown_field", "id_format", "id_immutable")
@@ -303,7 +308,9 @@ class App:
             "modifier": platform.shortcut_modifier(),
             "list_columns": MAX_LIST_COLUMNS,
             "values": {"arch_chosen": rules.V.ARCH_CHOSEN, "yes": rules.V.YES, "no": GATE_OFF,
-                       "change_open": rules.V.CHANGE_OPEN, "change_done": rules.V.CHANGE_DONE, "cancelled": rules.V.CANCELLED},
+                       "change_open": rules.V.CHANGE_OPEN, "change_done": rules.V.CHANGE_DONE,
+                       "lib_placeholder": rules.V.LIB_PLACEHOLDER, "lib_filling": rules.V.LIB_FILLING,
+                       "lib_done": rules.V.LIB_DONE, "lib_retired": rules.V.LIB_RETIRED, "cancelled": rules.V.CANCELLED},
             "retire_roles": list(CHANGE_CARD_RETIRE_ROLES),
         }
 
@@ -424,7 +431,7 @@ class App:
         return ""
 
     def owner_for(self, table: str, row: dict[str, Any], node: str, a: rules.Analysis) -> str:
-        return _s(row.get("phu_trach")) or _s(row.get("nguoi_nhan")) or _s(a.owner_of(node))
+        return _s(row.get("phu_trach")) or _s(row.get("nguoi_nhan")) or _s(row.get("nguoi_dien")) or _s(a.owner_of(node))
 
     def extras(self, table: str, row: dict[str, Any], a: rules.Analysis) -> dict[str, Any]:
         """Computed columns shown next to stored ones (never stored in Teable)."""
@@ -445,6 +452,8 @@ class App:
             return {"order_by": deadline.isoformat() if deadline else ""}
         if table == "kien_truc":
             return {"weighted": self.arch_weighted(a, row)}
+        if table == LIBRARY_TABLE:
+            return {"used": len(a.places(_s(row.get("ma_hm"))))}
         return {}
 
     def rows(self, query: dict[str, str], body: Any) -> dict[str, Any]:
@@ -479,6 +488,7 @@ class App:
                 "extras": self.extras(table, row, a),
                 "issues": self.row_issues(drafts.get(row.get("_draft")), known),
                 "notes": note_counts.get(key, 0),
+                "effective": self.effective_fields(table, row, a),
             })
         out.sort(key=lambda r: natural_key(r["key"]))
         return {
@@ -488,6 +498,14 @@ class App:
             "owners": sorted({_s(r.get("phu_trach")) for r in a.t["nut"] if _s(r.get("phu_trach"))}),
             "nodes": sorted(a.nodes, key=natural_key),
         }
+
+    @staticmethod
+    def effective_fields(table: str, row: dict[str, Any], a: rules.Analysis) -> dict[str, Any]:
+        """For a node placed from the library: the name, function and kind that the library item supplies."""
+        item = a.library.get(_s(row.get("ma_hm"))) if table == "nut" else None
+        if item is None:
+            return {}
+        return {f: item[f] for f in ("ten", "chuc_nang", "loai") if _s(item.get(f))}
 
     def row_issues(self, draft: Draft | None, known: dict[str, set[str]]) -> list[dict[str, str]]:
         """What still blocks a draft row from Commit (empty for a committed row)."""
@@ -511,7 +529,8 @@ class App:
             return {_s(r.get(id_name)): label(r)[:60] for r in a.t[table] if _s(r.get(id_name))}
 
         return {
-            "nut": build("nut", lambda r: _s(r.get("ten"))),
+            "nut": {c: a.node_name(c)[:60] for c in a.nodes if c and a.node_name(c)},
+            "hang_muc": build("hang_muc", lambda r: _s(r.get("ten"))),
             "yeu_cau": build("yeu_cau", lambda r: _s(r.get("mo_ta"))),
             "kien_truc": build("kien_truc", lambda r: _s(r.get("ten"))),
             "thong_so": build("thong_so", lambda r: _s(r.get("thong_so"))),
@@ -788,6 +807,7 @@ class App:
             "warnings": warnings,
             "tasks": tasks,
             "my_findings": [f for f in self.open_findings(a) if me and f["owner"] == me],
+            "my_items": self.items_to_fill(a),
             "total_warnings": len(a.warnings()),
         }
 
@@ -874,9 +894,12 @@ class App:
                     {"type": "chips", "title_key": "ctx_allocated_to", "items": nodes}]
         if table == "nut":
             nxt = a.next_action(key).text if a.is_leaf(key) else a.progress_text(key)
-            return [kv(("chuc_nang", _s(row.get("chuc_nang"))), ("loai", _s(row.get("loai"))),
-                       ("phu_trach", _s(row.get("phu_trach")))),
-                    {"type": "text", "title_key": "ctx_next", "text": nxt}, alloc_chips(key)]
+            item = _s(row.get("ma_hm"))
+            others = [{"text": name("nut", c)} for c in a.places(item) if c != key] if item else []
+            return [kv(("ma_hm", name(LIBRARY_TABLE, item) if item else ""), ("chuc_nang", _s(row.get("chuc_nang"))),
+                       ("loai", _s(row.get("loai"))), ("phu_trach", _s(row.get("phu_trach")))),
+                    {"type": "text", "title_key": "ctx_next", "text": nxt}, alloc_chips(key),
+                    {"type": "chips", "title_key": "ctx_also_used_in", "items": others}]
         if table == "ung_vien":
             price = a.price_used(key)
             checks = [{"text": f"{a._check_pair(c)[1]} {({'pass': '✓', 'fail': '✗'}).get(a.check_state(*a._check_pair(c)), '?')}",
@@ -893,6 +916,12 @@ class App:
             return [kv(("ma_yc", name("yeu_cau", _s(row.get("ma_yc")))), ("ma_nut", name("nut", node)),
                        ("kieu", _s(row.get("kieu"))), ("gia_tri_phan_bo", row.get("gia_tri_phan_bo"))),
                     {"type": "text", "title_key": "ctx_budget", "text": text}]
+        if table == LIBRARY_TABLE:
+            places = [{"text": name("nut", c)} for c in a.places(key)]
+            return [kv(("cap", _s(row.get("cap"))), ("loai", _s(row.get("loai"))), ("chuc_nang", _s(row.get("chuc_nang"))),
+                       ("hang", _s(row.get("hang"))), ("model", _s(row.get("model"))), ("sku", _s(row.get("sku"))),
+                       ("trang_thai", _s(row.get("trang_thai"))), ("nguoi_dien", _s(row.get("nguoi_dien")))),
+                    {"type": "chips", "title_key": "ctx_used_in", "items": places}]
         first = [(f, v) for f, v in row.items() if not f.startswith("_") and f != self.id_names[table]][:6]
         return [kv(*first)]
 
@@ -918,6 +947,7 @@ class App:
             "ra_soat": {"n": findings, "red": False},
             "yeu_cau": {"n": len(a.t["yeu_cau"]), "red": warned("yeu_cau")},
             "kien_truc": {"n": len(a.t["kien_truc"]), "red": warned("kien_truc")},
+            "thu_vien": {"n": len(a.t[LIBRARY_TABLE]), "red": bool(self.items_to_fill(a))},
             "cay": {"n": len(a.nodes), "red": warned("nut")},
             "phan_bo": {"n": len(a.t["phan_bo"]), "red": warned("phan_bo")},
             "nut": {"n": len(a.leaves), "red": warned("thong_so", "ung_vien", "doi_chieu")},
@@ -926,6 +956,174 @@ class App:
             "moc": {"n": len(a.t["moc"]) + len(a.t["quyet_dinh"]), "red": False},
             "commit": {"n": self.store.count_drafts(), "red": False},
         }
+
+    # ---- library and breakdown (branch feature/breakdown-library) --------------------
+
+    @staticmethod
+    def item_view(a: rules.Analysis, row: dict[str, Any]) -> dict[str, Any]:
+        key = _s(row.get("ma_hm"))
+        places = a.places(key)
+        return {
+            "key": key, "name": _s(row.get("ten")), "cap": _s(row.get("cap")), "loai": _s(row.get("loai")),
+            "status": _s(row.get("trang_thai")), "owner": _s(row.get("nguoi_dien")), "hang": _s(row.get("hang")),
+            "model": _s(row.get("model")), "sku": _s(row.get("sku")), "used": len(places), "places": places,
+            "draft": bool(row.get("_draft")),
+        }
+
+    def items_to_fill(self, a: rules.Analysis) -> list[dict[str, Any]]:
+        """Library items given to the current user that are still to be filled in."""
+        open_states = (rules.V.LIB_PLACEHOLDER, rules.V.LIB_FILLING)
+        return [
+            {"key": _s(r.get("ma_hm")), "name": _s(r.get("ten")), "status": _s(r.get("trang_thai")), "cap": _s(r.get("cap"))}
+            for r in a.t[LIBRARY_TABLE]
+            if self.user and _s(r.get("nguoi_dien")) == self.user and _s(r.get("trang_thai")) in open_states
+        ]
+
+    def library(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Search the library: code, name, maker, model, SKU. Retired items are hidden unless asked for."""
+        a = self.analysis()
+        q, cap, status = query.get("q", "").strip().lower(), query.get("cap", ""), query.get("status", "")
+        items = []
+        for row in a.t[LIBRARY_TABLE]:
+            view = self.item_view(a, row)
+            hay = " ".join(_s(row.get(f)) for f in ("ma_hm", "ten", "hang", "model", "sku", "chuc_nang")).lower()
+            retired = view["status"] == rules.V.LIB_RETIRED
+            if q and q not in hay:
+                continue
+            if cap and view["cap"] != cap:
+                continue
+            if status and view["status"] != status:
+                continue
+            if retired and not status and query.get("all") != "1":
+                continue
+            if query.get("mine") == "1" and view["owner"] != self.user:
+                continue
+            items.append(view)
+        items.sort(key=lambda v: natural_key(v["key"]))
+        people = {_s(r.get("phu_trach")) for r in a.t["nut"]} | {v["owner"] for v in map(lambda r: self.item_view(a, r), a.t[LIBRARY_TABLE])}
+        people |= {self.user}
+        return {"items": items, "people": sorted(p for p in people if p), "total": len(a.t[LIBRARY_TABLE]),
+                "names": self.names(a)}
+
+    def make_draft(self, made: list[int], table: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """Save one new record as a draft through the normal path, remembering it so a failure can undo the lot."""
+        res = self.save_draft({}, {"table": table, "op": "create", "fields": fields})
+        made.append(res["draft"]["id"])
+        return res
+
+    def undo_drafts(self, made: list[int]) -> None:
+        for draft_id in made:
+            try:
+                self.store.remove_draft(draft_id)
+            except KeyError:
+                continue
+        self._bump()
+
+    def next_id_for(self, table: str, **kw: Any) -> str:
+        try:
+            return schema_mod.next_free_id(self.schema, table, self.known_ids().get(table, set()), **kw)
+        except ValueError as exc:
+            raise ApiError(422, "no_proposal", str(exc)) from exc
+
+    def new_item(self, made: list[int], spec: dict[str, Any], cap: str) -> str:
+        allowed = ("ten", "cap", "loai", "nguoi_dien", "chuc_nang", "hang", "model", "sku", "link_datasheet", "ghi_chu")
+        fields = {k: v for k, v in spec.items() if k in allowed and _s(v)}
+        fields.setdefault("cap", cap)
+        fields["ma_hm"] = self.next_id_for(LIBRARY_TABLE)
+        fields["trang_thai"] = rules.V.LIB_PLACEHOLDER
+        return _s(self.make_draft(made, LIBRARY_TABLE, fields)["draft"]["key"])
+
+    def root_code(self, a: rules.Analysis) -> str:
+        return next((c for c, r in a.nodes.items() if c and not _s(r.get("ma_cha"))), "")
+
+    def ensure_root(self, made: list[int]) -> str:
+        """The single System at the top of every breakdown; made as a placeholder when the project has none yet."""
+        a = self.analysis()
+        code = self.root_code(a)
+        if code:
+            return code
+        name = _s(a.settings.get("ten_du_an")) or rules.TEXTS["root_system_name"]
+        item = self.new_item(made, {"ten": name}, rules.V.CAP_SYSTEM)
+        node = self.next_id_for("nut")
+        self.make_draft(made, "nut", {"ma_nut": node, "ma_hm": item})
+        return node
+
+    def place(self, made: list[int], item: str, parent: str, ma_kt: str = "", quantity: Any = None) -> str:
+        fields: dict[str, Any] = {"ma_nut": self.next_id_for("nut", parent=parent), "ma_cha": parent, "ma_hm": item}
+        if ma_kt:
+            fields["ma_kt"] = ma_kt
+        if quantity not in (None, ""):
+            fields["so_luong"] = quantity
+        return _s(self.make_draft(made, "nut", fields)["draft"]["key"])
+
+    def breakdown_add(self, query: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
+        """Put a library item (or a brand-new placeholder) under a node. Nothing is copied: the node only points at the item."""
+        a = self.analysis()
+        item, spec = _s(body.get("item")), body.get("new")
+        if not item and not isinstance(spec, dict):
+            raise ApiError(422, "need_item", "give an existing item or a new one")
+        if item and item not in a.library:
+            raise ApiError(404, "no_item", f"library item {item} does not exist")
+        parent = _s(body.get("parent"))
+        if parent and parent not in a.nodes:
+            raise ApiError(404, "no_parent", f"node {parent} does not exist")
+        if parent and a.level(parent) >= MAX_LEVEL:
+            raise ApiError(422, "too_deep", f"{parent} is already on the last level")
+        made: list[int] = []
+        try:
+            if body.get("place") is False:  # only make the item in the library, put it nowhere yet
+                if not isinstance(spec, dict):
+                    raise ApiError(422, "need_item", "give the new item to create")
+                return {"item": self.new_item(made, dict(spec), rules.V.CAP_SUB), "node": "", "created_item": True,
+                        "drafts": self.store.count_drafts()}
+            parent = parent or self.ensure_root(made)
+            a = self.analysis()
+            level = a.level(parent) + 1
+            created = False
+            if not item:
+                cap = rules.V.CAP_SUB if level == 1 else rules.V.CAP_PART
+                item, created = self.new_item(made, dict(spec or {}), cap), True
+            kt = _s(body.get("ma_kt")) or _s(a.nodes.get(parent, {}).get("ma_kt"))
+            node = self.place(made, item, parent, kt, body.get("so_luong"))
+        except ApiError:
+            self.undo_drafts(made)
+            raise
+        return {"item": item, "node": node, "created_item": created, "drafts": self.store.count_drafts()}
+
+    def architecture_scaffold(self, query: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
+        """Placeholders for the sub-systems an architecture names in 'he_con_cap1': reused when the library has them."""
+        key = _s(body.get("ma_kt"))
+        a = self.analysis()
+        arch = next((r for r in a.t["kien_truc"] if _s(r.get("ma_kt")) == key), None)
+        if arch is None:
+            raise ApiError(404, "no_row", f"architecture {key} is not in the cache or your drafts")
+        names = [n.strip() for n in re.split(r"[;\n]", _s(arch.get("he_con_cap1"))) if n.strip()]
+        if not names:
+            raise ApiError(422, "nothing_to_scaffold", f"{key} has no sub-systems written in its 'level 1' field")
+        made: list[int] = []
+        created: list[str] = []
+        existing: list[str] = []
+        items_created = 0
+        try:
+            root = self.ensure_root(made)
+            for name in names:
+                a = self.analysis()
+                same = lambda c, n=name: a.node_name(c).lower() == n.lower()  # noqa: E731
+                found = next((c for c in a.children.get(root, []) if _s(a.nodes[c].get("ma_kt")) == key and same(c)), None)
+                if found:
+                    existing.append(found)
+                    continue
+                item = next((k for k, r in a.library.items()
+                             if _s(r.get("ten")).lower() == name.lower() and _s(r.get("trang_thai")) != rules.V.LIB_RETIRED), "")
+                if not item:
+                    item = self.new_item(made, {"ten": name}, rules.V.CAP_SUB)
+                    items_created += 1
+                created.append(self.place(made, item, root, key))
+        except ApiError:
+            self.undo_drafts(made)
+            raise
+        return {"root": root, "created": created, "existing": existing, "items_created": items_created,
+                "drafts": self.store.count_drafts()}
 
     # ---- weekly review (docs/designs/review-first-pilot.md) -----------------------
 
@@ -1062,6 +1260,9 @@ class App:
                 "record_id": row.get("_record_id"), "modified": row.get("_modified"),
                 "warnings": [w.text for w in a.warnings_for("nut", code)],
                 "active": code not in a.inactive, "dot": self.node_dot(a, code, leaf),
+                "item": _s(row.get("ma_hm")), "arch": _s(row.get("ma_kt")),
+                "cap": _s((a.library.get(_s(row.get("ma_hm"))) or {}).get("cap")),
+                "item_status": _s((a.library.get(_s(row.get("ma_hm"))) or {}).get("trang_thai")),
             })
             for child in sorted(a.children.get(code, []), key=natural_key):
                 walk(child, depth + 1)
@@ -1071,7 +1272,9 @@ class App:
         for code in sorted(a.nodes, key=natural_key):
             walk(code, 0)
         gates = {k: a.gate(int(k[-1])) for k in GATE_KEYS}
-        return {"names": self.names(a), "nodes": out, "gates": gates, "can_gate": self.role == SYSTEM_DESIGNER}
+        archs = [{"key": _s(r.get("ma_kt")), "name": _s(r.get("ten")), "status": _s(r.get("trang_thai")), "scaffold": bool(_s(r.get("he_con_cap1")))}
+                 for r in sorted(a.t["kien_truc"], key=lambda r: _s(r.get("ma_kt")))]
+        return {"names": self.names(a), "nodes": out, "gates": gates, "can_gate": self.role == SYSTEM_DESIGNER, "archs": archs}
 
     @staticmethod
     def node_dot(a: rules.Analysis, code: str, leaf: bool) -> str:
@@ -1085,11 +1288,36 @@ class App:
             return "r"
         return "y"
 
+    def alloc_scope(self, a: rules.Analysis, node: str, related: bool) -> list[tuple[str, bool]]:
+        """The selected node and everything below it, then (optionally) other places of the same library parts."""
+        subtree, stack = {node}, [node]
+        while stack:
+            for child in a.children.get(stack.pop(), []):
+                if child not in subtree:
+                    subtree.add(child)
+                    stack.append(child)
+        out = [(c, False) for c in sorted(subtree, key=natural_key)]
+        if related:
+            items = {_s(a.nodes[c].get("ma_hm")) for c in subtree} - {""}
+            others = {c for item in items for c in a.places(item)} - subtree
+            out += [(c, True) for c in sorted(others, key=natural_key)]
+        return out
+
     def alloc_matrix(self, query: dict[str, str], body: Any) -> dict[str, Any]:
+        """Requirements against nodes. With ?node= only that node, its children and (related=1) other uses of its parts."""
         a = self.analysis()
-        columns = sorted({c for c in a.leaves} | {_s(p.get("ma_nut")) for p in a.t["phan_bo"]}, key=natural_key)
+        node = query.get("node", "")
+        if node and node in a.nodes:
+            scope = self.alloc_scope(a, node, query.get("related") == "1")
+        else:
+            columns = sorted({c for c in a.leaves} | {_s(p.get("ma_nut")) for p in a.t["phan_bo"]}, key=natural_key)
+            scope = [(c, False) for c in columns]
+        columns = [c for c, _ in scope]
+        wanted = set(columns)
         cells: dict[str, dict[str, Any]] = {}
         for p in a.t["phan_bo"]:
+            if _s(p.get("ma_nut")) not in wanted:
+                continue
             cells[f"{_s(p.get('ma_yc'))}|{_s(p.get('ma_nut'))}"] = {
                 "key": _s(p.get("ma_pb")), "kieu": _s(p.get("kieu")), "value": p.get("gia_tri_phan_bo"),
                 "unit": _s(p.get("don_vi")), "draft": p.get("_draft"),
@@ -1099,9 +1327,13 @@ class App:
                  "over": b.over, "method": b.method}
             for yc, b in a.budget_totals().items()
         }
-        reqs = [{"code": _s(r.get("ma_yc")), "text": _s(r.get("mo_ta")), "muc": _s(r.get("muc"))}
+        in_use = {key.split("|")[0] for key in cells}
+        reqs = [{"code": _s(r.get("ma_yc")), "text": _s(r.get("mo_ta")), "muc": _s(r.get("muc")),
+                 "used": _s(r.get("ma_yc")) in in_use}
                 for r in sorted(a.t["yeu_cau"], key=lambda r: natural_key(_s(r.get("ma_yc"))))]
         return {"requirements": reqs, "nodes": [c for c in columns if c in a.nodes or c],
+                "scope": [{"code": c, "name": a.node_name(c), "level": a.level(c) if c in a.nodes else 0, "related": rel}
+                          for c, rel in scope],
                 "cells": cells, "budgets": budgets, "names": self.names(a)}
 
     def node_detail(self, query: dict[str, str], body: Any) -> dict[str, Any]:
@@ -1188,6 +1420,9 @@ class App:
             ("GET", "/api/notes"): self.notes,
             ("GET", "/api/context"): self.context,
             ("GET", "/api/assistant"): self.assistant,
+            ("GET", "/api/library"): self.library,
+            ("POST", "/api/breakdown/add"): self.breakdown_add,
+            ("POST", "/api/architecture/scaffold"): self.architecture_scaffold,
             ("GET", "/api/review"): self.review,
             ("POST", "/api/review/end"): self.end_review,
             ("GET", "/api/architectures"): self.architectures,

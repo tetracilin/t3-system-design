@@ -8,14 +8,14 @@ const SESSION = document.querySelector('meta[name="session"]').content;
 const S = {
   meta: null, st: null, screen: 'khoi_tao', node: '', owner: '', treeName: '', treeData: null, fnode: '',
   names: {}, panel: 'open', renderId: 0, sort: {}, lastLeaf: '', tableCache: {},
-  sel: null, tabs: {}, collapsed: {}, pendingSelect: null,
+  sel: null, tabs: {}, collapsed: {}, pendingSelect: null, arch: '',
 };
 
 /* which screen shows which table (for "go to this row" from the palette, the draft list and the tree) */
 const TABLE_SCREEN = {
   yeu_cau: 'yeu_cau', kien_truc: 'kien_truc', nut: 'cay', phan_bo: 'phan_bo', thong_so: 'nut', ung_vien: 'nut',
   doi_chieu: 'nut', mua_hang: 'mua_hang', rfq: 'rfq', moc: 'moc', quyet_dinh: 'moc', sai_lech: 'ra_soat',
-  cai_dat: 'khoi_tao', cong_viec: 'tong_quan', ghi_chu: 'tong_quan',
+  cai_dat: 'khoi_tao', cong_viec: 'tong_quan', ghi_chu: 'tong_quan', hang_muc: 'thu_vien',
 };
 const NODE_TABS = ['nut', 'phan_bo', 'thong_so', 'ung_vien', 'doi_chieu', 'mua_hang'];
 const SCREEN_TABS = { cay: NODE_TABS, phan_bo: NODE_TABS, nut: NODE_TABS, moc: ['moc', 'quyet_dinh'] };
@@ -229,7 +229,7 @@ function drawTreePane() {
   if (!data) return;
   const info = document.getElementById('panel-node');
   info.textContent = '';
-  info.appendChild(document.createTextNode(S.node ? T('panel_node', { node: S.node }) : T('panel_no_node')));
+  info.appendChild(document.createTextNode(S.node ? T('panel_node', { node: withName('nut', S.node) }) : T('panel_no_node')));
   if (S.node) info.appendChild(h('button', { class: 'btn small', type: 'button', text: T('panel_clear_node'), onclick: () => selectNode('') }));
   const tabs = document.getElementById('tree-tabs');
   tabs.textContent = '';
@@ -287,8 +287,9 @@ function widenPanel() {
 
 async function selectNode(code) {
   S.node = code;
+  S.sel = code ? { table: 'nut', key: code } : null; // pane 4 shows and edits the chosen component
   await loadTrees();
-  if (S.screen === 'nut' || S.screen === 'cay' || S.screen === 'phan_bo') render();
+  if (['nut', 'cay', 'phan_bo', 'kien_truc'].includes(S.screen)) render();
 }
 
 /* ---------- navigation and the four-pane workspace ---------- */
@@ -433,9 +434,19 @@ function ctxBlock(table, b) {
   return null;
 }
 
+const COMPONENT_TABLES = ['nut', 'hang_muc'];
+
+/** What pane 4 is about: the selected row, or else the component chosen in the system chart. */
+function paneSel() {
+  if (S.sel) return S.sel;
+  if (S.node && ['cay', 'phan_bo', 'nut'].includes(S.screen)) return { table: 'nut', key: S.node };
+  return null;
+}
+const sameSel = (a, b) => (!a && !b) || (!!a && !!b && a.table === b.table && a.key === b.key);
+
 async function drawContext() {
   const body = document.getElementById('p4-body');
-  const sel = S.sel;
+  const sel = paneSel();
   const title = document.getElementById('p4-title');
   if (!sel) {
     title.textContent = T('p4_title');
@@ -448,14 +459,22 @@ async function drawContext() {
   try {
     ctx = await api('/api/context', { query: { table: sel.table, key: sel.key } });
   } catch (e) {
-    if (S.sel === sel) { body.textContent = ''; body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') })); }
+    if (sameSel(paneSel(), sel)) { body.textContent = ''; body.appendChild(h('p', { class: 'muted pad', text: T('p4_none') })); }
     return;
   }
-  if (S.sel !== sel) return; // the user moved on while this was loading
+  if (!sameSel(paneSel(), sel)) return; // the user moved on while this was loading
   title.textContent = T('p4_row', { title: ctx.title });
   const scroll = body.scrollTop;
+  const editable = COMPONENT_TABLES.includes(sel.table);
+  const props = editable ? h('div', { class: 'props-host', id: 'props-host' }) : null;
   body.textContent = '';
-  const info = h('div', { class: 'ctx-wrap', id: 'ctx-blocks' }, ctx.blocks.map((b) => ctxBlock(sel.table, b)));
+  if (props) {
+    body.appendChild(props);
+    await guard(() => drawProperties(props, sel)); // the breakdown place and its library item, editable here
+    if (!sameSel(paneSel(), sel)) return;
+  }
+  const blocks = ctx.blocks.filter((b) => !(editable && b.type === 'kv')); // the properties above replace the read-only list
+  const info = h('div', { class: 'ctx-wrap', id: 'ctx-blocks' }, blocks.map((b) => ctxBlock(sel.table, b)));
   body.appendChild(info);
   const notes = h('div', { class: 'notes', id: 'notes-box' });
   body.appendChild(notes);
@@ -546,12 +565,12 @@ function rowList(table, rows, onPick, o) {
     for (const row of all) {
       const title = rowTitle(table, row);
       if (q && !title.toLowerCase().includes(q)) continue;
-      const dot = row.warnings && row.warnings.length ? 'r' : (row.draft ? 'y' : '');
+      const dot = opts.dot ? opts.dot(row) : (row.warnings && row.warnings.length ? 'r' : (row.draft ? 'y' : ''));
       ul.appendChild(h('li', { class: 'item' + (S.sel && S.sel.key === row.key ? ' sel' : ''), 'data-key': row.key, onclick: () => onPick(row.key) },
         h('span', { class: 'dot ' + dot }), h('span', { class: 'nm', text: title }),
         row.draft ? h('span', { class: 'mark', text: '✎' }) : null,
         row.warnings && row.warnings.length ? h('span', { class: 'badge warn', title: row.warnings.join('\n'), text: '! ' + row.warnings.length }) : null,
-        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: row.key }), text: '✉ ' + row.notes }) : null,
+        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: withName(table, row.key) }), text: '✉ ' + row.notes }) : null,
         opts.side ? h('span', { class: 'nx', text: opts.side(row) }) : null));
     }
     if (!ul.firstChild) ul.appendChild(h('li', { class: 'muted pad', text: T('empty') }));
@@ -566,7 +585,10 @@ function rowList(table, rows, onPick, o) {
 async function gridFor(ws, table, o) {
   const opts = o || {};
   const filter = { node: opts.node || '', owner: opts.owner || '' };
-  const fetch = () => getRows(table, filter);
+  const fetch = async () => {
+    const d = await getRows(table, filter);
+    return opts.keep ? Object.assign({}, d, { rows: d.rows.filter(opts.keep) }) : d;
+  };
   const data = await fetch();
   const grid = buildGrid(table, data, {
     fetch, prefill: opts.prefill, actions: opts.actions, noNew: opts.noNew,
@@ -593,7 +615,7 @@ async function listAndGrid(ws, table, o) {
   const grid = await gridFor(ws, table, Object.assign({}, opts, {
     onChange: (g) => { holder.list.update(g.rows); },
   }));
-  holder.list = rowList(table, grid.rows, (key) => { grid.focusKey(key); grid.focus(); }, { side: opts.side });
+  holder.list = rowList(table, grid.rows, (key) => { grid.focusKey(key); grid.focus(); }, { side: opts.side, dot: opts.dot });
   ws.p2.appendChild(holder.list.el);
   ws.p3.appendChild(grid.el);
   const origReload = grid.reload;
@@ -601,54 +623,217 @@ async function listAndGrid(ws, table, o) {
   return grid;
 }
 
-/* ---------- pane 2 for the breakdown screens: the system chart ---------- */
+/* ---------- pane 2 for the breakdown screens: the system chart and the library ---------- */
 
-function chartDot(n) {
-  return h('span', { class: 'dot ' + (n.dot || ''), title: n.next || '' });
+const CAP_KEYS = ['cap_0', 'cap_1', 'cap_2'];
+const capLabel = (level) => T(CAP_KEYS[Math.max(0, Math.min(level, 2))]);
+const DROP_MIME = 'text/plain';
+
+/** Where a click or Enter in the library adds: under the selected node, or beside it when that is the last level. */
+function addTarget() {
+  const n = S.node && Chart.byCode ? Chart.byCode.get(S.node) : null;
+  if (!n) return { parent: '', level: 0 };
+  if (n.level >= 2) return { parent: n.parent, level: 1 };
+  return { parent: n.code, level: n.level + 1 };
 }
 
-async function chartPane(ws) {
+/** Put a library item (or a new placeholder) into the breakdown. Nothing is copied: the node points at the item. */
+async function addToBreakdown(body, parent, after) {
+  const target = parent === undefined ? addTarget() : { parent, level: ((Chart.byCode && Chart.byCode.get(parent)) || { level: -1 }).level + 1 };
+  const send = Object.assign({ parent: target.parent }, body);
+  const base = target.parent ? Chart.byCode && Chart.byCode.get(target.parent) : null;
+  if (S.arch && (!target.parent || (base && base.level === 0)) && !send.ma_kt) send.ma_kt = S.arch;
+  await guard(async () => {
+    const res = await api('/api/breakdown/add', { body: send });
+    if (res.node) S.node = res.node;
+    if (res.node && target.parent) S.collapsed[target.parent] = false;
+    toast(T(res.created_item ? (res.node ? 'lib_created_placed' : 'lib_created') : 'lib_added', { node: res.node || '', item: res.item }));
+    if (after) go(after, { node: res.node }); else await refreshAll();
+  });
+}
+
+function itemChips(it) {
+  const cls = it.status === S.meta.values.lib_placeholder ? ' ph' : '';
+  return [
+    h('span', { class: 'cap', text: it.cap }),
+    h('span', { class: 'chip item' + cls, text: it.status }),
+    it.owner ? h('span', { class: 'own', text: it.owner }) : null,
+    it.used ? h('span', { class: 'nx', title: it.places.join(', '), text: T('lib_used_n', { n: it.used }) }) : null,
+  ];
+}
+
+/** The library under the chart: search what exists first, then add it to the selected node (button, Enter or drag). */
+function libraryPanel(ws) {
+  const box = h('div', { class: 'p2-library', id: 'lib-panel' });
+  const search = h('input', { type: 'search', id: 'lib-search', class: 'list-filter', placeholder: T('lib_search'), 'aria-label': T('lib_search') });
+  const mine = h('input', { type: 'checkbox', id: 'lib-mine' });
+  const list = h('ul', { class: 'plain list-pane', id: 'lib-list' });
+  const count = h('span', { class: 'badge', id: 'lib-count', text: '0' });
+  const name = h('input', { type: 'text', id: 'lib-new', placeholder: T('lib_new_name'), 'aria-label': T('lib_new_name'), autocomplete: 'off' });
+  const who = h('input', { type: 'text', id: 'lib-who', placeholder: T('lib_who'), 'aria-label': T('lib_who'), list: 'lib-people', autocomplete: 'off' });
+  const people = h('datalist', { id: 'lib-people' });
+  const create = async (place) => {
+    const ten = name.value.trim();
+    if (!ten) { name.focus(); return; }
+    name.value = '';
+    await addToBreakdown({ new: { ten, nguoi_dien: who.value.trim() || undefined }, place }, place === false ? '' : undefined);
+  };
+  name.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); create(ev.shiftKey ? false : true); }
+  });
+  let timer = null;
+  const load = async () => {
+    const d = await api('/api/library', { query: { q: search.value.trim(), mine: mine.checked ? '1' : '' } });
+    count.textContent = String(d.items.length);
+    people.textContent = '';
+    d.people.forEach((p) => people.appendChild(h('option', { value: p })));
+    list.textContent = '';
+    for (const it of d.items) {
+      const li = h('li', { class: 'item lib-item', 'data-key': it.key, draggable: 'true', tabindex: '0', title: T('lib_drag_hint'),
+        onclick: () => select('hang_muc', it.key) },
+        h('div', { class: 'r1' }, h('b', { class: 'code', text: it.key }), h('span', { class: 'nm', text: it.name }),
+          h('button', { class: 'btn small', type: 'button', 'data-add': it.key, text: T('btn_add_plus'), title: T('lib_add_title'),
+            onclick: (ev) => { ev.stopPropagation(); addToBreakdown({ item: it.key }); } })),
+        h('div', { class: 'r2' }, itemChips(it)));
+      li.addEventListener('dragstart', (ev) => { ev.dataTransfer.setData(DROP_MIME, 'hm:' + it.key); ev.dataTransfer.effectAllowed = 'copy'; });
+      li.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && ev.target === li) { ev.preventDefault(); ev.stopPropagation(); addToBreakdown({ item: it.key }); }
+      });
+      list.appendChild(li);
+    }
+    if (!d.items.length) list.appendChild(h('li', { class: 'muted pad', text: T('lib_none') }));
+  };
+  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => guard(load), 150); });
+  mine.addEventListener('change', () => guard(load));
+  box.appendChild(h('div', { class: 'lib-head' }, h('h3', { class: 'pane-sub' }, T('lib_title'), ' ', count),
+    h('label', { class: 'switch' }, mine, T('lib_mine'))));
+  box.appendChild(search);
+  box.appendChild(h('div', { class: 'lib-new' }, name, who, people,
+    h('button', { class: 'btn small primary', type: 'button', id: 'btn-lib-create', text: T('btn_create_add'), title: T('lib_create_title'), onclick: () => create(true) })));
+  box.appendChild(list);
+  ws.p2.appendChild(box);
+  return load();
+}
+
+/** The breakdown chart. `mode` 'list' (the system tree screen: pane 2, with the library) or 'diagram' (the architecture screen: the diagram on top of pane 3). */
+async function chartPane(ws, mode) {
+  const diagramMode = mode === 'diagram';
   const data = await api('/api/tree_nodes');
-  ws.t2 = T('p2_chart');
-  const gates = h('div', { class: 'toolbar' });
+  if (!diagramMode) ws.t2 = T('p2_chart');
+  const byCode = new Map(data.nodes.map((n) => [n.code, n]));
+  const children = new Map();
+  for (const n of data.nodes) if (n.parent && byCode.has(n.parent)) children.set(n.parent, (children.get(n.parent) || []).concat(n));
+  Chart.byCode = byCode;
+  if (S.arch && !data.archs.some((x) => x.key === S.arch)) S.arch = '';
+
+  const bar = h('div', { class: 'toolbar chart-bar' });
   for (const key of Object.keys(data.gates)) {
     const cb = h('input', { type: 'checkbox', id: 'gate-' + key, 'data-gate': key, disabled: !data.can_gate, checked: data.gates[key] || false,
       title: data.can_gate ? '' : T('role_needed') });
     cb.addEventListener('change', () => setGate(key, cb.checked, cb));
-    gates.appendChild(h('label', { class: 'switch' }, cb, T('gate_' + key)));
+    bar.appendChild(h('label', { class: 'switch' }, cb, T('gate_' + key)));
   }
-  gates.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
-  ws.p2.appendChild(gates);
+  const arch = h('select', { id: 'arch-filter', 'aria-label': T('arch_filter') }, h('option', { value: '', text: T('arch_all') }),
+    data.archs.map((x) => h('option', { value: x.key, selected: x.key === S.arch, text: x.key + ' - ' + x.name + ' (' + x.status + ')' })));
+  arch.addEventListener('change', () => { S.arch = arch.value; draw(); });
+  bar.appendChild(h('label', { class: 'switch' }, T('arch_filter') + ': ', arch));
+  if (!diagramMode) bar.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
   const wrap = h('div', { id: 'chart', role: 'tree', 'aria-label': T('p2_chart') });
-  ws.p2.appendChild(wrap);
-  const kids = new Map();
-  data.nodes.forEach((n, i) => { kids.set(n.code, i + 1 < data.nodes.length && data.nodes[i + 1].depth > n.depth); });
+  const top = h('div', { class: 'p2-chart' + (diagramMode ? ' dg-mode' : '') }, bar, wrap);
+  (diagramMode ? ws.p3 : ws.p2).appendChild(top);
+
+  const dropOn = (el, parent, ma_kt, allowed) => {
+    el.addEventListener('dragover', (ev) => {
+      if (!allowed) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+      el.classList.add('drop');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drop'));
+    el.addEventListener('drop', (ev) => {
+      el.classList.remove('drop');
+      const text = ev.dataTransfer.getData(DROP_MIME) || '';
+      if (!allowed || !text.startsWith('hm:')) return;
+      ev.preventDefault();
+      addToBreakdown(Object.assign({ item: text.slice(3) }, ma_kt ? { ma_kt } : {}), parent);
+    });
+  };
+
+  const nodeRow = (n, depth) => {
+    const collapsed = !!S.collapsed[n.code];
+    const hasKids = (children.get(n.code) || []).length > 0;
+    const sel = n.code === S.node;
+    const placeholder = n.item && n.item_status === S.meta.values.lib_placeholder;
+    const row = h('div', { class: 'row' + (sel ? ' sel' : '') + (n.active === false ? ' inactive' : '') + (n.draft ? ' is-draft' : ''), role: 'treeitem',
+      'data-code': n.code, 'data-level': String(n.level), 'data-depth': String(depth), 'aria-selected': String(sel),
+      'aria-expanded': hasKids ? String(!collapsed) : undefined, tabindex: sel ? '0' : '-1', 'data-focus-first': sel,
+      style: 'padding-left:' + (8 + depth * 16) + 'px', onclick: () => selectNode(n.code) },
+      h('div', { class: 'r1' },
+        h('span', { class: 'tw', text: hasKids ? (collapsed ? '▸' : '▾') : '' }),
+        n.leaf ? h('span', { class: 'dot ' + (n.dot || ''), title: n.next }) : h('span', { class: 'dot' }),
+        h('span', { class: 'cap cap-' + n.level, text: capLabel(n.level) }),
+        h('b', { class: 'code', text: n.code }), h('span', { class: 'nm', text: n.name || T('node_unnamed') }),
+        n.draft ? h('span', { class: 'mark', text: '✎' }) : null,
+        n.warnings.length ? h('span', { class: 'badge warn', title: n.warnings.join('\n'), text: '! ' + n.warnings.length }) : null),
+      h('div', { class: 'r2' },
+        n.item ? h('span', { class: 'chip item' + (placeholder ? ' ph' : ''), title: n.item_status, text: n.item + (placeholder ? ' · ' + T('lib_placeholder_short') : '') }) : null,
+        n.arch ? h('span', { class: 'chip arch', text: n.arch }) : null,
+        n.owner ? h('span', { class: 'own', text: n.owner }) : null,
+        h('span', { class: 'nx', text: n.next + (n.cost ? ' · ' + n.cost : ''), title: T('chart_cost', { n: n.cost }) })));
+    dropOn(row, n.code, '', n.level < 2);
+    return row;
+  };
+
+  const archHead = (a, depth, count) => {
+    const head = h('div', { class: 'arch-head' + (a.key === S.arch ? ' sel' : ''), 'data-arch': a.key, style: 'padding-left:' + (8 + depth * 16) + 'px' },
+      h('b', { text: a.key + ' - ' + a.name }), h('span', { class: 'chip arch', text: a.status }), h('span', { class: 'nx', text: T('arch_children', { n: count }) }),
+      a.scaffold ? h('button', { class: 'btn small', type: 'button', 'data-scaffold': a.key, text: T('btn_scaffold'), title: T('scaffold_title'),
+        onclick: (ev) => { ev.stopPropagation(); scaffoldArchitecture(a.key); } }) : null);
+    const root = data.nodes.find((x) => !x.parent);
+    dropOn(head, root ? root.code : '', a.key, true);
+    return head;
+  };
+
+  const common = h('div', { class: 'arch-head common', style: '' }, h('b', { text: T('arch_common') }));
 
   const draw = () => {
     wrap.textContent = '';
-    let hideBelow = null;
-    let first = true;
-    for (const n of data.nodes) {
-      if (hideBelow !== null) { if (n.depth > hideBelow) continue; hideBelow = null; }
-      const collapsed = !!S.collapsed[n.code];
-      if (collapsed && kids.get(n.code)) hideBelow = n.depth;
-      const sel = n.code === S.node;
-      const row = h('div', { class: 'row' + (sel ? ' sel' : '') + (n.active === false ? ' inactive' : '') + (n.draft ? ' is-draft' : ''), role: 'treeitem',
-        'data-code': n.code, 'data-level': String(n.level), 'data-depth': String(n.depth), 'aria-selected': String(sel),
-        'aria-expanded': kids.get(n.code) ? String(!collapsed) : undefined, tabindex: sel || (first && !S.node) ? '0' : '-1',
-        'data-focus-first': sel || (first && !S.node),
-        style: 'padding-left:' + (8 + n.depth * 18) + 'px', onclick: () => selectNode(n.code) },
-        h('span', { class: 'tw', text: kids.get(n.code) ? (collapsed ? '▸' : '▾') : '' }),
-        n.leaf ? chartDot(n) : h('span', { class: 'dot' }),
-        h('span', { class: 'code', text: n.code }), h('span', { class: 'nm', text: n.name }),
-        n.owner ? h('span', { class: 'own', text: n.owner }) : null,
-        n.draft ? h('span', { class: 'mark', text: '✎' }) : null,
-        n.warnings.length ? h('span', { class: 'badge warn', title: n.warnings.join('\n'), text: '! ' + n.warnings.length }) : null,
-        h('span', { class: 'nx', text: n.next + (n.cost ? ' · ' + n.cost : ''), title: T('chart_cost', { n: n.cost }) }));
-      first = false;
-      wrap.appendChild(row);
+    if (diagramMode) {
+      drawDiagram(wrap, data, children, {
+        selected: S.node, collapsed: S.collapsed, archFilter: S.arch,
+        onSelect: (code) => selectNode(code),
+        onToggle: (code) => { S.collapsed[code] = !S.collapsed[code]; draw(); },
+        onAdd: (code) => { S.node = code; quickAddDialog('node'); },
+        onDrop: (code, item) => addToBreakdown({ item }, code),
+      });
+      return;
     }
+    const visit = (n, depth) => {
+      if (S.arch && n.arch && n.arch !== S.arch) return;
+      wrap.appendChild(nodeRow(n, depth));
+      if (S.collapsed[n.code]) return;
+      const kids = children.get(n.code) || [];
+      if (n.level === 0 && data.archs.length && true) {
+        for (const a of data.archs) {
+          if (S.arch && a.key !== S.arch) continue;
+          const mine = kids.filter((k) => k.arch === a.key);
+          wrap.appendChild(archHead(a, depth + 1, mine.length));
+          mine.forEach((k) => visit(k, depth + 2));
+        }
+        const rest = kids.filter((k) => !k.arch);
+        if (rest.length) {
+          const head = common.cloneNode(true);
+          head.style.paddingLeft = (8 + (depth + 1) * 16) + 'px';
+          wrap.appendChild(head);
+          rest.forEach((k) => visit(k, depth + 2));
+        }
+      } else kids.forEach((k) => visit(k, depth + 1));
+    };
+    const roots = data.nodes.filter((n) => !n.parent || !byCode.has(n.parent));
+    roots.forEach((n) => visit(n, 0));
     if (!data.nodes.length) wrap.appendChild(h('p', { class: 'muted pad', text: T('empty') }));
+    const first = wrap.querySelector('.row[data-code]');
+    if (first && !wrap.querySelector('.row[tabindex="0"]')) { first.setAttribute('tabindex', '0'); first.setAttribute('data-focus-first', ''); }
   };
   draw();
   wrap.appendChild(h('div', { class: 'legend', text: T('chart_legend') }));
@@ -665,16 +850,17 @@ async function chartPane(ws) {
     arrow(key) {
       const rows = visible();
       const cur = current() || rows[0];
+      if (!cur) return;
       const at = rows.indexOf(cur);
       if (key === 'ArrowDown') focusRow(rows[Math.min(at + 1, rows.length - 1)]);
       else if (key === 'ArrowUp') focusRow(rows[Math.max(at - 1, 0)]);
       else if (key === 'ArrowRight') {
         const code = cur.dataset.code;
-        if (kids.get(code) && S.collapsed[code]) { S.collapsed[code] = false; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
+        if ((children.get(code) || []).length && S.collapsed[code]) { S.collapsed[code] = false; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
         else if (rows[at + 1] && Number(rows[at + 1].dataset.depth) > Number(cur.dataset.depth)) focusRow(rows[at + 1]);
       } else if (key === 'ArrowLeft') {
         const code = cur.dataset.code;
-        if (kids.get(code) && !S.collapsed[code]) { S.collapsed[code] = true; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
+        if ((children.get(code) || []).length && !S.collapsed[code]) { S.collapsed[code] = true; draw(); focusRow(wrap.querySelector('[data-code="' + code + '"]')); }
         else { for (let i = at - 1; i >= 0; i -= 1) if (Number(rows[i].dataset.depth) < Number(cur.dataset.depth)) { focusRow(rows[i]); break; } }
       }
     },
@@ -687,7 +873,7 @@ async function chartPane(ws) {
     addChild() {
       const cur = current();
       const code = cur ? cur.dataset.code : S.node;
-      const level = cur ? Number(cur.dataset.level) : (data.nodes.find((n) => n.code === S.node) || { level: 0 }).level;
+      const level = cur ? Number(cur.dataset.level) : (byCode.get(S.node) || { level: 0 }).level;
       if (!code) { toast(T('chart_pick_first')); return; }
       if (level >= 2) { toast(T('chart_max_level')); return; }
       S.node = code;
@@ -698,6 +884,18 @@ async function chartPane(ws) {
     },
   };
   ws.chart = Chart.current;
+  if (!diagramMode) await libraryPanel(ws);
+}
+
+/** Create placeholder sub-systems for the names an architecture lists, then show them in the chart. */
+async function scaffoldArchitecture(key) {
+  await guard(async () => {
+    const res = await api('/api/architecture/scaffold', { body: { ma_kt: key } });
+    toast(T('scaffold_done', { n: res.created.length, items: res.items_created, kept: res.existing.length }));
+    S.arch = key;
+    if (S.screen !== 'cay') { go('cay'); return; }
+    await refreshAll();
+  });
 }
 
 async function setGate(key, value, checkbox) {
@@ -803,12 +1001,18 @@ SCREENS.tong_quan = async (ws) => {
   box.appendChild(h('h2', { class: 'pad', text: T('ov_my_warnings') + ' (' + data.warnings.length + ')' }));
   box.appendChild(data.warnings.length ? h('ul', { class: 'plain' }, data.warnings.map((w) =>
     h('li', { class: 'click', onclick: () => jumpTo(w.table, w.key) },
-      h('b', { text: w.key || tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ', w.text)))
+      h('b', { text: w.key ? withName(w.table, w.key) : tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ', w.text)))
     : h('p', { class: 'muted pad', text: T('ov_none') }));
   box.appendChild(h('p', { class: 'muted pad', text: T('ov_total_warnings', { n: data.total_warnings }) }));
   box.appendChild(h('h2', { class: 'pad', text: T('ov_my_findings') + ' (' + data.my_findings.length + ')' }));
   box.appendChild(data.my_findings.length
     ? h('ul', { class: 'plain', id: 'my-findings' }, data.my_findings.map(findingRow))
+    : h('p', { class: 'muted pad', text: T('ov_none') }));
+  box.appendChild(h('h2', { class: 'pad', text: T('ov_my_items') + ' (' + data.my_items.length + ')' }));
+  box.appendChild(data.my_items.length
+    ? h('ul', { class: 'plain', id: 'my-items' }, data.my_items.map((i) =>
+      h('li', { class: 'click', 'data-item': i.key, onclick: () => jumpTo('hang_muc', i.key) },
+        h('b', { text: withName('hang_muc', i.key) }), ' (' + i.cap + ') - ' + i.status)))
     : h('p', { class: 'muted pad', text: T('ov_none') }));
   box.appendChild(h('h2', { class: 'pad', text: T('ov_my_tasks') }));
   box.appendChild(data.tasks.length ? h('ul', { class: 'plain' }, data.tasks.map((t) =>
@@ -920,13 +1124,13 @@ SCREENS.ra_soat = async (ws) => {
     if (g.warnings.length) {
       sec.appendChild(h('h3', { text: T('rv_warnings') + ' (' + g.warnings.length + ')' }));
       sec.appendChild(h('ul', { class: 'plain' }, g.warnings.map((w) =>
-        h('li', null, h('b', { text: w.key || tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ' + w.text + ' ',
+        h('li', null, h('b', { text: w.key ? withName(w.table, w.key) : tableLabel(w.table) }), ' (' + tableLabel(w.table) + ') ' + w.text + ' ',
           note({ node: w.node || '', owner: g.owner, code: w.key })))));
     }
     if (g.changed.length) {
       sec.appendChild(h('h3', { text: T('rv_changed') + ' (' + g.changed.length + ')' }));
       sec.appendChild(h('ul', { class: 'plain' }, g.changed.map((c) =>
-        h('li', null, h('b', { text: c.key }), ' (' + tableLabel(c.table) + ') ',
+        h('li', null, h('b', { text: withName(c.table, c.key) }), ' (' + tableLabel(c.table) + ') ',
           note({ node: c.node, owner: g.owner, code: c.key })))));
     }
     box.appendChild(sec);
@@ -940,16 +1144,50 @@ SCREENS.ra_soat = async (ws) => {
 
 SCREENS.yeu_cau = (ws) => listAndGrid(ws, 'yeu_cau', { side: (r) => T('n_nodes', { n: (r.extras || {}).n_nodes || 0 }) });
 
-SCREENS.kien_truc = (ws) => listAndGrid(ws, 'kien_truc', {
+SCREENS.kien_truc = async (ws) => {
+  await chartPane(ws, 'diagram'); // the system diagram lives here, above the architecture table
+  const grid = await listAndGrid(ws, 'kien_truc', {
   side: (r) => ((r.extras || {}).weighted === null || (r.extras || {}).weighted === undefined ? '' : String(r.extras.weighted)),
   actions: (row) => {
     const allowed = (S.st || {}).role === 'system_designer';
     const chosen = row.fields.trang_thai === S.meta.values.arch_chosen;
-    return h('button', { class: 'btn small', type: 'button', 'data-choose': row.key, disabled: !allowed || chosen,
-      title: allowed ? '' : T('role_needed'), text: T('btn_choose'),
-      onclick: () => chooseArchitecture({ key: row.key, fields: row.fields, base: row.base, record_id: row.record_id, modified: row.modified, draft: row.draft }) });
+    return [
+      h('button', { class: 'btn small', type: 'button', 'data-choose': row.key, disabled: !allowed || chosen,
+        title: allowed ? '' : T('role_needed'), text: T('btn_choose'),
+        onclick: () => chooseArchitecture({ key: row.key, fields: row.fields, base: row.base, record_id: row.record_id, modified: row.modified, draft: row.draft }) }),
+      h('button', { class: 'btn small', type: 'button', 'data-scaffold': row.key, disabled: !row.fields.he_con_cap1 || !!row.issues.length,
+        title: T('scaffold_title'), text: T('btn_scaffold'), onclick: () => scaffoldArchitecture(row.key) }),
+    ];
   },
-});
+  });
+  await libraryPanel(ws); // the library under the architecture list: drag an item onto a box of the diagram
+  return grid;
+};
+
+/** The library as a screen: every item in a table you can edit in place, with the quick placeholder at the top. */
+SCREENS.thu_vien = async (ws) => {
+  const name = h('input', { type: 'text', id: 'lib-new', placeholder: T('lib_new_name'), 'aria-label': T('lib_new_name'), autocomplete: 'off' });
+  const who = h('input', { type: 'text', id: 'lib-who', placeholder: T('lib_who'), 'aria-label': T('lib_who'), autocomplete: 'off' });
+  const make = () => guard(async () => {
+    const ten = name.value.trim();
+    if (!ten) { name.focus(); return; }
+    const res = await api('/api/breakdown/add', { body: { new: { ten, nguoi_dien: who.value.trim() || undefined }, place: false } });
+    toast(T('lib_created', { node: '', item: res.item }));
+    S.pendingSelect = { table: 'hang_muc', key: res.item };
+    await refreshAll();
+  });
+  name.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); make(); } });
+  const v = S.meta.values;
+  const dotOf = (row) => ({ [v.lib_placeholder]: 'r', [v.lib_filling]: 'y', [v.lib_done]: 'g' }[row.fields.trang_thai] || '');
+  const bar = h('span', { class: 'lib-new' }, name, who,
+    h('button', { class: 'btn small primary', type: 'button', id: 'btn-lib-make', text: T('btn_make_placeholder'), onclick: make }));
+  return listAndGrid(ws, 'hang_muc', {
+    dot: dotOf, barExtra: bar,
+    side: (r) => (r.extras.used ? T('lib_used_n', { n: r.extras.used }) : ''),
+    actions: (row) => h('button', { class: 'btn small', type: 'button', 'data-use': row.key, text: T('btn_use'), title: T('btn_use_title'),
+      onclick: () => addToBreakdown({ item: row.key }, undefined, 'cay') }),
+  });
+};
 
 async function chooseArchitecture(card) {
   const reason = h('textarea', { id: 'choose-reason', rows: '3' });
@@ -998,7 +1236,7 @@ SCREENS.mua_hang = async (ws) => {
 function compareBlock(cmp, node) {
   const ct = h('table', { class: 'grid compact', id: 'compare' });
   ct.appendChild(h('thead', null, h('tr', null, h('th', { class: 'ro', text: T('col_spec') }),
-    cmp.candidates.map((uv) => h('th', { class: 'ro' }, uv, h('div', { class: cmp.pass[uv] ? 'pass' : 'unchecked', text: cmp.results[uv] }))))));
+    cmp.candidates.map((uv) => h('th', { class: 'ro' }, withName('ung_vien', uv), h('div', { class: cmp.pass[uv] ? 'pass' : 'unchecked', text: cmp.results[uv] }))))));
   ct.appendChild(h('tbody', null, cmp.rows.map((r) => h('tr', { 'data-spec': r.ts },
     h('td', null, h('b', { text: r.ts }), ' ' + r.name, h('div', { class: 'muted', text: [r.min, r.max].map(num).join(' ... ') + ' ' + r.unit + ' (' + r.muc + ')' })),
     r.cells.map((c) => h('td', { class: 'cell', 'data-cell': c.uv + '|' + r.ts, title: [c.quote, c.page].filter(Boolean).join(' / '),
@@ -1022,11 +1260,49 @@ async function checkCell(uv, ts) {
   }
 }
 
+/** Allocation for the selected component: its sub-tree (and where its parts are also used), with a requirement filter. */
+async function allocPanel() {
+  const data = await api('/api/alloc', { query: { node: S.node, related: S.allocRelated === false ? '0' : '1' } });
+  const picked = S.reqPick || (S.reqPick = []);
+  const text = (S.reqText || '').toLowerCase();
+  const inFilter = (r) => (picked.length ? picked.includes(r.code)
+    : (text ? (r.code + ' ' + r.text).toLowerCase().includes(text) : (S.reqAll || r.used)));
+  const shown = data.requirements.filter(inFilter);
+  const scope = new Set(data.scope.map((s) => s.code));
+  const view = Object.assign({}, data, { requirements: shown });
+  const redo = () => render();
+
+  const search = h('input', { type: 'search', id: 'alloc-req-filter', class: 'list-filter', value: S.reqText || '', placeholder: T('alloc_filter'), 'aria-label': T('alloc_filter') });
+  search.addEventListener('change', () => { S.reqText = search.value.trim(); redo(); });
+  const options = h('datalist', { id: 'alloc-req-options' }, data.requirements.map((r) => h('option', { value: r.code, label: r.text, text: r.code + ' - ' + r.text })));
+  const add = h('input', { type: 'text', id: 'alloc-req-add', list: 'alloc-req-options', placeholder: T('alloc_add_req'), 'aria-label': T('alloc_add_req'), autocomplete: 'off' });
+  add.addEventListener('change', () => {
+    const code = add.value.trim().split(' ')[0];
+    if (data.requirements.some((r) => r.code === code) && !picked.includes(code)) { picked.push(code); redo(); }
+  });
+  const chips = h('div', { class: 'chips', id: 'alloc-chips' }, picked.map((code) => h('button', { type: 'button', class: 'chip removable', 'data-req': code,
+    title: T('alloc_unpick'), text: code + ' ×', onclick: () => { picked.splice(picked.indexOf(code), 1); redo(); } })));
+  const toggle = (id, label, on, set) => {
+    const cb = h('input', { type: 'checkbox', id, checked: on });
+    cb.addEventListener('change', () => { set(cb.checked); redo(); });
+    return h('label', { class: 'switch' }, cb, label);
+  };
+  const bar = h('div', { class: 'toolbar alloc-bar' },
+    toggle('alloc-related', T('alloc_related'), S.allocRelated !== false, (v) => { S.allocRelated = v; }),
+    toggle('alloc-all', T('alloc_show_all'), !!S.reqAll, (v) => { S.reqAll = v; }),
+    search, add, chips,
+    h('span', { class: 'muted', text: T('alloc_counts', { shown: shown.length, all: data.requirements.length, cols: data.scope.length }) }));
+  options.hidden = true;
+  const el = h('div', { id: 'alloc-panel' }, bar, options, allocMatrix(view));
+  return { el, keep: (row) => scope.has(row.fields.ma_nut) && shown.some((r) => r.code === row.fields.ma_yc) };
+}
+
 function allocMatrix(data) {
   const t = h('table', { class: 'grid compact', id: 'alloc-matrix' });
+  const related = new Set((data.scope || []).filter((s) => s.related).map((s) => s.code));
   t.appendChild(h('thead', null, h('tr', null,
     h('th', { class: 'ro', text: T('col_requirement') }),
-    data.nodes.map((n) => h('th', { class: 'ro', title: withName('nut', n), text: n })),
+    data.nodes.map((n) => h('th', { class: 'ro' + (related.has(n) ? ' related' : ''), title: withName('nut', n) + (related.has(n) ? ' - ' + T('alloc_related_col') : ''), text: withName('nut', n) })),
     h('th', { class: 'ro', text: T('col_budget_total') }), h('th', { class: 'ro', text: T('col_margin') }))));
   const body = h('tbody');
   for (const r of data.requirements) {
@@ -1069,8 +1345,14 @@ async function hierarchy(ws) {
   if (active === 'doi_chieu' && info && info.compare && info.compare.candidates.length && info.compare.rows.length) {
     ws.p3.appendChild(compareBlock(info.compare, S.node));
   }
-  if (active === 'phan_bo') ws.p3.appendChild(allocMatrix(await api('/api/alloc')));
-  const grid = await gridFor(ws, active, { node: S.node, prefill, onChange: () => { /* counts refresh on the next render */ } });
+  let keep = null;
+  if (active === 'phan_bo') {
+    if (!S.node) { ws.p3.appendChild(h('p', { class: 'muted pad', id: 'alloc-pick', text: T('alloc_pick_node') })); return; }
+    const panel = await allocPanel();
+    ws.p3.appendChild(panel.el);
+    keep = panel.keep;
+  }
+  const grid = await gridFor(ws, active, { node: active === 'phan_bo' ? '' : S.node, prefill, keep, onChange: () => { /* counts refresh on the next render */ } });
   ws.p3.appendChild(grid.el);
 }
 SCREENS.cay = hierarchy;
@@ -1087,7 +1369,7 @@ SCREENS.commit = async (ws) => {
   ws.t3 = T('nav_commit');
   ws.p2.appendChild(data.drafts.length ? h('ul', { class: 'plain list-pane', id: 'draft-index' }, data.drafts.map((d) =>
     h('li', { class: 'item', 'data-draft': d.id, onclick: () => jumpTo(d.table, d.key) },
-      h('span', { class: 'dot ' + (d.valid ? 'g' : 'r') }), h('span', { class: 'nm', text: tableLabel(d.table) + ' ' + d.key }), h('span', { class: 'nx', text: T('op_' + d.op) }))))
+      h('span', { class: 'dot ' + (d.valid ? 'g' : 'r') }), h('span', { class: 'nm', text: tableLabel(d.table) + ' ' + withName(d.table, d.key) }), h('span', { class: 'nx', text: T('op_' + d.op) }))))
     : h('p', { class: 'muted pad', text: T('drafts_empty') }));
   const results = h('div', { id: 'commit-results', class: 'pad' });
   const btn = h('button', { class: 'btn primary', type: 'button', id: 'btn-commit', text: T('btn_commit'), 'data-focus-first': true,
@@ -1216,6 +1498,7 @@ async function start() {
     }
   } catch (e) { /* no storage: keep the default widths */ }
   setPanel(saved);
+  initChrome();
   buildNav();
   const st = await loadState();
   S.treeName = st ? st.tree : '';

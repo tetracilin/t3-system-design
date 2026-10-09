@@ -169,7 +169,7 @@ async function drawNotes(box, table, key) {
   box.textContent = '';
   if (!key) return;
   const data = await api('/api/notes', { query: { table, key } });
-  box.appendChild(h('h3', { class: 'pane-sub' }, T('notes_title', { key }), ' ', h('span', { class: 'badge', id: 'note-count', text: String(data.notes.length) })));
+  box.appendChild(h('h3', { class: 'pane-sub' }, T('notes_title', { key: withName(table, key) }), ' ', h('span', { class: 'badge', id: 'note-count', text: String(data.notes.length) })));
   const changed = async () => { delete S.tableCache.ghi_chu; await loadState(); await drawNotes(box, table, key); if (window.onNotesChanged) window.onNotesChanged(); };
   const send = async (body) => { await api('/api/draft', { body }); toast(T('draft_saved')); await changed(); };
   for (const n of data.notes) {

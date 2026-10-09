@@ -38,6 +38,40 @@ function gridCell(table, name, fs, value) {
   return h('span', { text: String(value) });
 }
 
+/** Save one changed field of a row that already exists (committed or a draft) as a draft. The grid and the properties
+ *  panel both use it, so the stale check and the draft rules are the same everywhere. */
+async function saveRowField(table, row, name, value) {
+  const spec = specOf(table);
+  const idName = spec.id_field;
+  let body;
+  if (row.draft_op === 'create') {
+    const fields = { ...row.fields };
+    if (value === '') delete fields[name]; else fields[name] = value;
+    if (spec.id.kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
+    body = { table, op: 'create', fields, draft_id: row.draft, partial: true };
+  } else {
+    const changes = {};
+    for (const k of Object.keys(row.fields)) {
+      if (k === idName) continue;
+      const a = row.fields[k] === '' ? null : row.fields[k];
+      const b = row.base && row.base[k] !== undefined ? row.base[k] : null;
+      if (String(a) !== String(b)) changes[k] = row.fields[k];
+    }
+    const base = row.base && row.base[name] !== undefined ? row.base[name] : null;
+    if (String(value === '' ? null : value) === String(base)) delete changes[name]; else changes[name] = value;
+    if (!Object.keys(changes).length && row.draft) {
+      await api('/api/draft/discard', { body: { draft_id: row.draft } });
+      delete S.tableCache[table];
+      return { discarded: true };
+    }
+    body = { table, op: 'update', key: row.key, record_id: row.record_id, base_modified: row.modified, base_fields: row.base || row.fields,
+      draft_id: row.draft || undefined, fields: changes, partial: true };
+  }
+  const res = await api('/api/draft', { body });
+  delete S.tableCache[table];
+  return { res };
+}
+
 function buildGrid(table, data, o) {
   const opts = o || {};
   const spec = specOf(table);
@@ -65,6 +99,8 @@ function buildGrid(table, data, o) {
   function readonly(r, c) {
     const name = nameOfCol(c);
     if (!name) return true;
+    const placed = rowAt(r);
+    if (placed && placed.effective && placed.effective[name] !== undefined) return true; // supplied by the library item
     if (name === idName) {
       if (kind === 'composite') return true; // built from its parts
       const row = rowAt(r);
@@ -106,14 +142,16 @@ function buildGrid(table, data, o) {
       const tr = h('tr', { 'data-key': row.key, class: row.draft ? 'is-draft' : '' });
       const rn = h('td', { class: 'rn' }, String(r + 1), row.draft ? h('span', { class: 'mark', title: T('draft_mark'), text: ' ✎' }) : null,
         row.warnings && row.warnings.length ? h('span', { class: 'badge warn', title: row.warnings.join('\n'), text: '! ' + row.warnings.length }) : null,
-        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: row.key }), text: '✉ ' + row.notes }) : null);
+        row.notes ? h('span', { class: 'badge note', title: T('notes_title', { key: withName(table, row.key) }), text: '✉ ' + row.notes }) : null);
       tr.appendChild(rn);
       if (opts.actions) tr.appendChild(h('td', { class: 'act' }, opts.actions(row) || null)); // right after the row number: always in view
       names.forEach((name, c) => {
         const bad = issues.filter((i) => i.field === name);
         const td = h('td', { 'data-col': name, class: 'cell' + (readonly(r, c) ? ' ro' : '') + (bad.length ? ' err' : ''),
           title: bad.map((i) => T('v_' + i.code) + ' - ' + i.message).join('\n') });
-        td.appendChild(gridCell(table, name, spec.fields[name], row.fields[name]));
+        const fromLibrary = row.effective && row.effective[name] !== undefined;
+        td.appendChild(gridCell(table, name, spec.fields[name], fromLibrary ? row.effective[name] : row.fields[name]));
+        if (fromLibrary) td.title = T('grid_from_library');
         td.addEventListener('mousedown', () => { g.select(r, c); });
         td.addEventListener('dblclick', () => g.startEdit(null));
         tr.appendChild(td);
@@ -147,7 +185,7 @@ function buildGrid(table, data, o) {
 
   function paintMessages() {
     const all = [];
-    for (const row of g.view) for (const i of issuesOf(row)) all.push(row.key + ': ' + fieldLabel(table, i.field) + ' - ' + issueText(i));
+    for (const row of g.view) for (const i of issuesOf(row)) all.push(withName(table, row.key) + ': ' + fieldLabel(table, i.field) + ' - ' + issueText(i));
     g.msg.textContent = '';
     if (all.length) {
       g.msg.appendChild(h('span', { class: 'badge warn', text: T('grid_issues', { n: all.length }) }));
@@ -355,36 +393,12 @@ function buildGrid(table, data, o) {
     try { g.proposed = (await api('/api/next_id', { query: q })).id || ''; } catch (e) { g.proposed = ''; }
   }
 
-  const changedFields = (row) => {
-    const out = {};
-    for (const k of Object.keys(row.fields)) {
-      if (k === idName) continue;
-      const a = row.fields[k] === '' ? null : row.fields[k];
-      const b = row.base && row.base[k] !== undefined ? row.base[k] : null;
-      if (String(a) !== String(b)) out[k] = row.fields[k];
-    }
-    return out;
-  };
-
   async function saveCell(r, name, value) {
-    let body;
     const row = rowAt(r);
-    if (row && row.draft_op === 'create') {
-      const fields = { ...row.fields };
-      if (value === '') delete fields[name]; else fields[name] = value;
-      if (kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
-      body = { table, op: 'create', fields, draft_id: row.draft, partial: true };
-    } else if (row) {
-      const changes = changedFields(row);
-      const base = row.base && row.base[name] !== undefined ? row.base[name] : null;
-      if (String(value === '' ? null : value) === String(base)) delete changes[name]; else changes[name] = value;
-      if (!Object.keys(changes).length && row.draft) {
-        await api('/api/draft/discard', { body: { draft_id: row.draft } });
-        await g.reload();
-        return;
-      }
-      body = { table, op: 'update', key: row.key, record_id: row.record_id, base_modified: row.modified, base_fields: row.base || row.fields,
-        draft_id: row.draft || undefined, fields: changes, partial: true };
+    let body;
+    if (row) {
+      const out = await saveRowField(table, row, name, value);
+      if (out.discarded) { await g.reload(); return; }
     } else {
       // the new row at the bottom: keep the typed values until its ID is known, then save it as a draft
       if (value === '') delete g.pending[name]; else g.pending[name] = value;
@@ -393,10 +407,12 @@ function buildGrid(table, data, o) {
       else if (kind === 'composite') { const id = gridCompositeId(spec, fields); if (id) fields[idName] = id; }
       if (!fields[idName]) return; // the ID is not known yet: stays on screen, not yet a draft
       body = { table, op: 'create', fields, partial: true };
+      await api('/api/draft', { body });
+      delete S.tableCache[table];
+      g.pending = {};
+      g.justCreated = body.fields[idName];
+      await proposeId();
     }
-    await api('/api/draft', { body });
-    delete S.tableCache[table];
-    if (!row) { g.pending = {}; g.justCreated = body.fields[idName]; await proposeId(); }
     await g.reload();
     await loadState();
     if (opts.onChange) opts.onChange(table);

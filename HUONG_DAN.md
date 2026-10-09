@@ -12,6 +12,10 @@
    Ngăn 2: danh sách hoặc sơ đồ hệ thống. Ngăn 3: bảng. Ngăn 4: ngữ cảnh của dòng đang chọn, **ghi chú**
    (viết Markdown, ghi rõ người viết, chỉ người viết sửa hoặc hủy) và trợ lý Hermes (chưa bật).
    Phím tắt: Alt+1..4 nhảy giữa các ngăn, Ctrl+K tìm nhanh, ? xem bảng phím tắt, F1 xem cây quyết định lớn.
+   **Thư viện hạng mục:** đừng gõ lại một hệ con hay linh kiện đã có. Ở màn hình Cây hệ thống, tìm trong khung
+   Thư viện (mã, tên, hãng, model, SKU) rồi bấm ＋ Thêm, bấm Enter, hoặc kéo vào một nút. Chưa có thì gõ tên mới và
+   Enter: ứng dụng tạo hạng mục **chỗ giữ chỗ** và đặt vào hệ thống; giao cho một người điền hãng, model, SKU, chức
+   năng rồi đổi tình trạng sang Đã điền. Kiến trúc có cột Hệ con cấp 1: bấm **Tạo khung** để tạo sẵn các hệ con giữ chỗ.
 5. **Commit.** Bấm Commit để gửi bản nháp lên Teable. Mã (ID) ai gửi trước thì giữ mã đó. Nếu
    mã trùng, ứng dụng đề xuất mã mới cho bạn; bản ghi đã có trong Teable không bị thay đổi.
 6. **Sửa bản ghi bị người khác đổi.** Ứng dụng hiện hai phiên bản từng trường để bạn chọn.
