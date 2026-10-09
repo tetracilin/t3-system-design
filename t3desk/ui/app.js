@@ -289,7 +289,7 @@ async function selectNode(code) {
   S.node = code;
   S.sel = code ? { table: 'nut', key: code } : null; // pane 4 shows and edits the chosen component
   await loadTrees();
-  if (S.screen === 'nut' || S.screen === 'cay' || S.screen === 'phan_bo') render();
+  if (['nut', 'cay', 'phan_bo', 'kien_truc'].includes(S.screen)) render();
 }
 
 /* ---------- navigation and the four-pane workspace ---------- */
@@ -715,9 +715,11 @@ function libraryPanel(ws) {
   return load();
 }
 
-async function chartPane(ws) {
+/** The breakdown chart. `mode` 'list' (the system tree screen: pane 2, with the library) or 'diagram' (the architecture screen: the diagram on top of pane 3). */
+async function chartPane(ws, mode) {
+  const diagramMode = mode === 'diagram';
   const data = await api('/api/tree_nodes');
-  ws.t2 = T('p2_chart');
+  if (!diagramMode) ws.t2 = T('p2_chart');
   const byCode = new Map(data.nodes.map((n) => [n.code, n]));
   const children = new Map();
   for (const n of data.nodes) if (n.parent && byCode.has(n.parent)) children.set(n.parent, (children.get(n.parent) || []).concat(n));
@@ -735,13 +737,10 @@ async function chartPane(ws) {
     data.archs.map((x) => h('option', { value: x.key, selected: x.key === S.arch, text: x.key + ' - ' + x.name + ' (' + x.status + ')' })));
   arch.addEventListener('change', () => { S.arch = arch.value; draw(); });
   bar.appendChild(h('label', { class: 'switch' }, T('arch_filter') + ': ', arch));
-  const viewBtn = (key) => h('button', { class: 'btn small', type: 'button', 'data-view': key, 'aria-pressed': String((S.chartView || 'diagram') === key),
-    text: T('chart_view_' + key), onclick: () => { S.chartView = key; render(); } });
-  bar.appendChild(h('span', { class: 'seg', role: 'group', 'aria-label': T('chart_view') }, viewBtn('diagram'), viewBtn('list')));
-  bar.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
+  if (!diagramMode) bar.appendChild(h('button', { class: 'btn small', type: 'button', id: 'btn-add-child', text: T('btn_add_child_node'), onclick: () => Chart.current && Chart.current.addChild() }));
   const wrap = h('div', { id: 'chart', role: 'tree', 'aria-label': T('p2_chart') });
-  const top = h('div', { class: 'p2-chart' + ((S.chartView || 'diagram') === 'diagram' ? ' dg-mode' : '') }, bar, wrap);
-  ws.p2.appendChild(top);
+  const top = h('div', { class: 'p2-chart' + (diagramMode ? ' dg-mode' : '') }, bar, wrap);
+  (diagramMode ? ws.p3 : ws.p2).appendChild(top);
 
   const dropOn = (el, parent, ma_kt, allowed) => {
     el.addEventListener('dragover', (ev) => {
@@ -799,7 +798,7 @@ async function chartPane(ws) {
 
   const draw = () => {
     wrap.textContent = '';
-    if ((S.chartView || 'diagram') === 'diagram') {
+    if (diagramMode) {
       drawDiagram(wrap, data, children, {
         selected: S.node, collapsed: S.collapsed, archFilter: S.arch,
         onSelect: (code) => selectNode(code),
@@ -885,7 +884,7 @@ async function chartPane(ws) {
     },
   };
   ws.chart = Chart.current;
-  await libraryPanel(ws);
+  if (!diagramMode) await libraryPanel(ws);
 }
 
 /** Create placeholder sub-systems for the names an architecture lists, then show them in the chart. */
@@ -1145,7 +1144,9 @@ SCREENS.ra_soat = async (ws) => {
 
 SCREENS.yeu_cau = (ws) => listAndGrid(ws, 'yeu_cau', { side: (r) => T('n_nodes', { n: (r.extras || {}).n_nodes || 0 }) });
 
-SCREENS.kien_truc = (ws) => listAndGrid(ws, 'kien_truc', {
+SCREENS.kien_truc = async (ws) => {
+  await chartPane(ws, 'diagram'); // the system diagram lives here, above the architecture table
+  return listAndGrid(ws, 'kien_truc', {
   side: (r) => ((r.extras || {}).weighted === null || (r.extras || {}).weighted === undefined ? '' : String(r.extras.weighted)),
   actions: (row) => {
     const allowed = (S.st || {}).role === 'system_designer';
@@ -1158,7 +1159,8 @@ SCREENS.kien_truc = (ws) => listAndGrid(ws, 'kien_truc', {
         title: T('scaffold_title'), text: T('btn_scaffold'), onclick: () => scaffoldArchitecture(row.key) }),
     ];
   },
-});
+  });
+};
 
 /** The library as a screen: every item in a table you can edit in place, with the quick placeholder at the top. */
 SCREENS.thu_vien = async (ws) => {
