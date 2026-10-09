@@ -5,7 +5,7 @@
  * item dragged from the library onto a box places it under that box. The diagram reads the same /api/tree_nodes
  * data as the list view, so both always show the same hierarchy. */
 
-const DIAGRAM = { boxW: 190, boxH: 52, gapX: 40, gapY: 6, pad: 12 };
+const DIAGRAM = { boxW: 230, boxH: 92, gapX: 36, gapY: 8, pad: 12 };
 
 /** Position every visible node: x by depth, y by leaf order (a parent sits at the middle of its children). */
 function diagramLayout(nodes, children, collapsed) {
@@ -70,7 +70,7 @@ function drawDiagram(host, data, children, ops) {
     const hasKids = (kids.get(n.code) || []).length > 0;
     const placeholder = n.item && n.item_status === S.meta.values.lib_placeholder;
     const box = h('div', {
-      class: 'dg-box cap-' + n.level + (n.code === ops.selected ? ' sel' : '') + (n.active === false ? ' inactive' : '') + (n.draft ? ' is-draft' : ''),
+      class: 'dg-box lvl-' + n.level + (n.code === ops.selected ? ' sel' : '') + (n.active === false ? ' inactive' : '') + (n.draft ? ' is-draft' : ''),
       role: 'treeitem', 'data-code': n.code, 'aria-selected': String(n.code === ops.selected), 'aria-label': n.code + ' ' + (n.name || ''),
       style: 'left:' + x(p.depth) + 'px;top:' + y(p.row) + 'px;width:' + D.boxW + 'px;height:' + D.boxH + 'px',
       onclick: () => ops.onSelect(n.code) },

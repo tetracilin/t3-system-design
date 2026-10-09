@@ -1146,7 +1146,7 @@ SCREENS.yeu_cau = (ws) => listAndGrid(ws, 'yeu_cau', { side: (r) => T('n_nodes',
 
 SCREENS.kien_truc = async (ws) => {
   await chartPane(ws, 'diagram'); // the system diagram lives here, above the architecture table
-  return listAndGrid(ws, 'kien_truc', {
+  const grid = await listAndGrid(ws, 'kien_truc', {
   side: (r) => ((r.extras || {}).weighted === null || (r.extras || {}).weighted === undefined ? '' : String(r.extras.weighted)),
   actions: (row) => {
     const allowed = (S.st || {}).role === 'system_designer';
@@ -1160,6 +1160,8 @@ SCREENS.kien_truc = async (ws) => {
     ];
   },
   });
+  await libraryPanel(ws); // the library under the architecture list: drag an item onto a box of the diagram
+  return grid;
 };
 
 /** The library as a screen: every item in a table you can edit in place, with the quick placeholder at the top. */
